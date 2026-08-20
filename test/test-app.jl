@@ -21,14 +21,15 @@
         [3.0, 2.0, 1.0])
 
     "Run a model through Tachikoma's real event loop, headlessly."
-    function run_app(model, script; width=100, height=28, frames=90, fps=30)
+    function run_app(model, script;
+                     width=100, height=28, frames=90, fps=30)
         out = record_app(model, tempname() * ".tach";
                          width, height, frames, fps, events=script(fps))
         (; file=out, model)
     end
 end
 
-@testitem "the real event loop drives the explorer" tags=[:integration] setup=[AppLoop] begin
+@testitem "the real loop drives the explorer" tags=[:integration] setup=[AppLoop] begin
     model = Explorer(; tree = ObjectTree(root_node(sample_net(), "net")))
 
     # A plausible few seconds of use, through `app`'s own loop rather than
