@@ -16,6 +16,8 @@ const HELP_TEXT = """
                    (a Dict as entries, or as slots/keys/vals/count/…)
 
   Tab              move focus between the tree and the detail pane
+  drag             the border between the panes resizes them; right-click
+                   it to restore the default split
   y / Y            copy the path expression / the printed value
   r                re-read the selected node from the live object
   ? / q            this help / quit, returning the selected value
@@ -41,9 +43,10 @@ const HELP_TEXT = """
 
 Base.@kwdef mutable struct Explorer <: Model
     tree::ObjectTree
-    detail::Paragraph = Paragraph(Span[]; wrap=word_wrap)
+    detail::Vector{Vector{Tuple{String,Style}}} = Vector{Tuple{String,Style}}[]
     detail_key::Tuple{UInt,Int,Int} = (UInt(0), 0, 0)
-    detail_lines::Int = 0
+    detail_budget::Int = 0
+    detail_offset::Int = 0
     revision::Int = 0
     focus::Symbol = :tree
     quit::Bool = false
@@ -53,6 +56,11 @@ Base.@kwdef mutable struct Explorer <: Model
     notice::String = ""
     notice_ttl::Int = 0
     names::Union{Nothing,Tuple{String,String}} = nothing
+    # Draggable split between the two panes. A comparison wants a wide tree
+    # (two values per row); exploring one object wants a wide detail pane.
+    split::ResizableLayout = ResizableLayout(Horizontal,
+                                             Constraint[Percent(55), Fill(1)];
+                                             min_pane_size=12)
 end
 
 "Whether this explorer is comparing two objects rather than exploring one."
@@ -105,8 +113,12 @@ function update!(m::Explorer, e::KeyEvent)
     elseif e.key == :char && (e.char == 'n' || e.char == 'N')
         if isempty(m.tree.query)
             notify!(m, "no search query — press / first")
-        elseif !search!(m.tree, m.tree.query, e.char == 'n' ? 1 : -1)
-            notify!(m, "no match for \"$(m.tree.query)\"")
+        else
+            outcome = search!(m.tree, m.tree.query, e.char == 'n' ? 1 : -1)
+            m.revision += 1
+            outcome === :none && notify!(m, "no match for \"$(m.tree.query)\"")
+            outcome === :revealed &&
+                notify!(m, "found in $(current_node(m.tree).path)")
         end
     elseif e.key == :char && (e.char == 'a' || e.char == 'A')
         outcome = hunt_anomaly!(m.tree, e.char == 'a' ? 1 : -1)
@@ -172,16 +184,17 @@ function update!(m::Explorer, e::KeyEvent)
 end
 
 function scroll_detail!(m::Explorer, e::KeyEvent)
+    limit = max(0, length(m.detail) - 1)
     if e.key == :up || (e.key == :char && e.char == 'k')
-        m.detail.scroll_offset = max(0, m.detail.scroll_offset - 1)
+        m.detail_offset = max(0, m.detail_offset - 1)
     elseif e.key == :down || (e.key == :char && e.char == 'j')
-        m.detail.scroll_offset += 1
+        m.detail_offset = min(limit, m.detail_offset + 1)
     elseif e.key == :pageup
-        m.detail.scroll_offset = max(0, m.detail.scroll_offset - 10)
+        m.detail_offset = max(0, m.detail_offset - 10)
     elseif e.key == :pagedown
-        m.detail.scroll_offset += 10
+        m.detail_offset = min(limit, m.detail_offset + 10)
     elseif e.key == :home || (e.key == :char && e.char == 'g')
-        m.detail.scroll_offset = 0
+        m.detail_offset = 0
     end
     nothing
 end
@@ -214,6 +227,9 @@ function search_key!(m::Explorer, e::KeyEvent)
 end
 
 function update!(m::Explorer, e::MouseEvent)
+    # The border between the panes is draggable; right-clicking it restores the
+    # default split. Only events it does not claim reach the tree.
+    handle_resize!(m.split, e) && return nothing
     if handle_mouse!(m.tree, e)
         m.focus = :tree
         m.tree.focused = true
@@ -242,15 +258,48 @@ function refresh_detail!(m::Explorer, node::Union{Nothing,ObjNode},
     key = (node === nothing ? UInt(0) : objectid(node), width, m.revision)
     if key != m.detail_key
         m.detail_key = key
-        m.detail_lines = 0
-        m.detail.scroll_offset = 0
+        m.detail_budget = 0
+        m.detail_offset = 0
     end
 
-    needed = m.detail.scroll_offset + height + DETAIL_LOOKAHEAD
-    needed > m.detail_lines || return nothing
-    m.detail_lines = needed
-    m.detail.spans = node === nothing ? Span[] :
-                     detail_spans(node, width; names=m.names, height=needed)
+    needed = m.detail_offset + height + DETAIL_LOOKAHEAD
+    needed > m.detail_budget || return nothing
+    m.detail_budget = needed
+    spans = node === nothing ? Span[] :
+            detail_spans(node, width; names=m.names, height=needed)
+    m.detail = wrap_spans(spans, max(1, width - 1))
+    nothing
+end
+
+"""
+    render_detail!(m, area, buffer)
+
+Draw the rows of the (already wrapped) detail pane that fit, and a scrollbar if
+there are more.
+"""
+function render_detail!(m::Explorer, area::Rect, buf::Buffer)
+    (area.width < 1 || area.height < 1) && return nothing
+    total = length(m.detail)
+    m.detail_offset = clamp(m.detail_offset, 0, max(0, total - area.height))
+
+    scrolling = total > area.height
+    text_area = scrolling && area.width > 1 ?
+        Rect(area.x, area.y, area.width - 1, area.height) : area
+    max_x = right(text_area)
+
+    for i in 1:area.height
+        idx = m.detail_offset + i
+        idx > total && break
+        cx = text_area.x
+        y = text_area.y + i - 1
+        for (text, style) in m.detail[idx]
+            cx > max_x && break
+            cx = set_string!(buf, cx, y, text, style; max_x)
+        end
+    end
+
+    scrolling && render(Scrollbar(total, area.height, m.detail_offset),
+                        Rect(right(area), area.y, 1, area.height), buf)
     nothing
 end
 
@@ -263,8 +312,7 @@ function view(m::Explorer, f::Frame)
     parts = split_layout(Layout(Vertical, heights), a)
     main, bar = parts[1], parts[end]
 
-    split = a.width >= 100 ? Percent(50) : Percent(60)
-    cols = split_layout(Layout(Horizontal, Constraint[split, Fill(1)]), main)
+    cols = split_layout(m.split, main)
 
     node = current_node(m.tree)
     nrows = length(rows(m.tree))
@@ -285,11 +333,12 @@ function view(m::Explorer, f::Frame)
     )
     inner = render(detail_block, cols[2], f.buffer)
     refresh_detail!(m, node, inner.width, inner.height)
-    render(m.detail, inner, f.buffer)
+    render_detail!(m, inner, f.buffer)
 
     if m.searching
         render(m.input, parts[2], f.buffer)
     end
+    render_resize_handles!(f.buffer, m.split)
     render(status_bar(m, bar.width), bar, f.buffer)
     m.show_help && render_help(f, a)
 

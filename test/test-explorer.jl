@@ -107,11 +107,17 @@ end
     draw(m)                                  # populate the detail pane
     press!(m, :tab)
     @test m.focus === :detail
-    press!(m, :down); press!(m, :down)
+    press!(m, :down)
+    press!(m, :down)
     draw(m)
-    @test m.detail.scroll_offset > 0
+    @test m.detail_offset > 0
     press!(m, 'g')
-    @test m.detail.scroll_offset == 0
+    @test m.detail_offset == 0
+
+    # The layout is cached: drawing again does not rebuild it.
+    before = m.detail
+    draw(m)
+    @test m.detail === before
 end
 
 @testitem "help overlay opens and any key closes it" tags=[:unit] setup=[AppHarness] begin
@@ -381,4 +387,60 @@ end
     @test occursin("lr", s2)
     @test occursin("Float64", s2)
     @test occursin("::type", s2)
+end
+
+@testitem "f filters a module listing by kind" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: binding_kind, cycle_kinds!, in_module
+
+    m = explorer(Narcissus, "Narcissus")
+    press!(m, :right)
+    everything = length(rows(m.tree))
+    @test in_module(m.tree)
+
+    press!(m, 'f')
+    @test m.tree.kinds === :function
+    @test occursin("functions", m.notice)
+    @test all(r -> r.node.value isa Module || binding_kind(r.node.value) === :function,
+              rows(m.tree))
+    @test length(rows(m.tree)) < everything
+    @test occursin("functions only", screen(draw(m)))
+
+    press!(m, 'f')
+    @test m.tree.kinds === :type
+    @test all(r -> r.node.value isa Module || binding_kind(r.node.value) === :type,
+              rows(m.tree))
+
+    press!(m, 'f'); press!(m, 'f'); press!(m, 'f')
+    @test m.tree.kinds === :all                     # back around
+    @test length(rows(m.tree)) == everything
+end
+
+@testitem "f says so where there is nothing to narrow" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, 'f')
+    @test occursin("nothing to filter", m.notice)
+end
+
+@testitem "a function shows its methods and its docs" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(Narcissus.components, "components")
+    press!(m, :right)
+    @test length(rows(m.tree)) > 1
+    @test all(r -> r.node.value isa Method, rows(m.tree)[2:end])
+
+    s = screen(draw(m, 110, 24))
+    @test occursin("methods", s)
+    @test occursin("List the parts of", s)        # the rendered docstring
+end
+
+@testitem "the memory column is right-aligned" tags=[:unit] setup=[AppHarness] begin
+    m = explorer((small=[1, 2], big=rand(20_000)), "s")
+    press!(m, :right)
+    press!(m, 'M')
+
+    tb = draw(m, 100, 8)
+    # Character positions, not byte offsets — the box-drawing characters around
+    # the panes are multi-byte and would make aligned columns look ragged.
+    columns = [findlast(==('%'), collect(row_text(tb, y))) for y in 2:4]
+    @test all(!isnothing, columns)
+    @test length(unique(columns)) == 1             # every % in the same column
 end

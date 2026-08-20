@@ -238,7 +238,8 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
         push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
                           tstyle(:border, dim=true)))
         push!(spans, Span("Semantic view lists what the module offers; the field "
-                          * "view lists everything it defines.\n", _dim()))
+                          * "view lists everything it defines.\n\n", _dim()))
+        _docs!(spans, v, width; separator=false)
         return spans
     elseif v isa Type
         _row!(spans, "super", string(supertype(v)), tstyle(:secondary))
@@ -252,6 +253,12 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
             push!(spans, Span("::" * string(fieldtype(v, i)) * "\n",
                               tstyle(:secondary)))
         end
+        _docs!(spans, v, width)
+        return spans
+    elseif v isa Function
+        _row!(spans, "methods", string(length(methods(v))), tstyle(:text))
+        _row!(spans, "defined", string(parentmodule(v)), _dim())
+        _docs!(spans, v, width)
         return spans
     elseif v isa AbstractArray
         _row!(spans, "size", string(size(v)), tstyle(:text))
@@ -392,4 +399,98 @@ function memory_spans(n::ObjNode)
     [(lpad(human_bytes(bytes), 9), heavy),
      (" " * share_bar(share), tstyle(:text_dim)),
      (lpad(string(round(Int, 100share), "%"), 5), tstyle(:text_dim))]
+end
+
+"""
+    _docs!(spans, value, width; separator=true)
+
+Append the value's rendered documentation, or a note that there is none.
+
+What you want from a function or a type is almost never its `show` output — it
+is what the thing is *for*. The Markdown comes back as ANSI, which
+`parse_ansi` splits into styled spans, so the pane shows headers, emphasis and
+code blocks rather than a wall of asterisks.
+"""
+function _docs!(spans, @nospecialize(v), width::Int; separator::Bool=true)
+    separator && push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
+                                   tstyle(:border, dim=true)))
+    text = docstring(v; width = max(20, width - 1))
+    text === nothing && return push!(spans, Span("(no documentation)\n", _dim()))
+    append!(spans, parse_ansi(text))
+    spans
+end
+
+# ── Wrapping ─────────────────────────────────────────────────────────
+
+"""
+    wrap_spans(spans, width) -> Vector{Vector{Tuple{String,Style}}}
+
+Lay styled text out into lines of at most `width` columns, breaking at spaces
+where possible and mid-word only when a word cannot fit on a line of its own.
+Explicit newlines in the span text are honoured.
+
+The point of doing this ourselves is that the result can be *cached*. A
+paragraph widget re-wraps its whole content on every frame; the detail pane's
+content changes only when the selection or the pane width does, so wrapping
+once and drawing the visible slice is the difference between a per-frame cost
+proportional to the rendered value and one proportional to the screen.
+"""
+function wrap_spans(spans::Vector{Span}, width::Int)
+    lines = Vector{Tuple{String,Style}}[]
+    width < 1 && return lines
+    push!(lines, Tuple{String,Style}[])
+    col = Ref(0)
+
+    newline!() = (push!(lines, Tuple{String,Style}[]); col[] = 0)
+    function emit!(text::AbstractString, style::Style)
+        isempty(text) && return
+        push!(lines[end], (String(text), style))
+        col[] += textwidth(text)
+    end
+
+    for span in spans
+        for (i, part) in enumerate(split(span.content, '\n'; keepempty=true))
+            i > 1 && newline!()
+            isempty(part) && continue
+            for token in _tokens(part)
+                w = textwidth(token)
+                if w > width
+                    # Longer than a whole line: break it wherever it lands.
+                    chars = collect(token)
+                    while !isempty(chars)
+                        room = width - col[]
+                        room <= 0 && (newline!(); room = width)
+                        take = min(room, length(chars))
+                        emit!(String(chars[1:take]), span.style)
+                        chars = chars[(take + 1):end]
+                    end
+                elseif col[] + w > width
+                    # A wrapped line never starts with the space that broke it.
+                    all(isspace, token) && (newline!(); continue)
+                    newline!()
+                    emit!(token, span.style)
+                else
+                    emit!(token, span.style)
+                end
+            end
+        end
+    end
+    lines
+end
+
+"Split text into alternating runs of spaces and non-spaces, keeping both."
+function _tokens(s::AbstractString)
+    out = String[]
+    chars = collect(s)
+    i = 1
+    while i <= length(chars)
+        spacey = isspace(chars[i])
+        j = i
+        while j <= length(chars) && isspace(chars[j]) == spacey
+            j += 1
+        end
+        push!(out, String(chars[i:(j - 1)]))
+        i = j
+    end
+    out
 end

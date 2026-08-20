@@ -20,23 +20,23 @@ print_object(model)                                  # or just print it
 ```
 
 ```text
-╭─  object  ───────────────────────────  13 rows  ─╮╭─  detail  ───────────────  [1]  ─╮
-│  ▾run::Run = Run("exp-042", Config(0.003, 50, [:…││path     run.losses[1]            │
-│  ├─ name::String = "exp-042"                     ││type     Float64                  │
-│  ├─▾config::Config = Config(0.003, 50, [:baselin…││kind     primitive                │
-│  │ ├─ lr::Float64 = 0.003                        ││parts    0                        │
-│  │ ├─ epochs::Int64 = 50                         ││sizeof   8 bytes                  │
-│  │ └─▸tags::Vector{Symbol} = [:baseline, :adamw] ││super    AbstractFloat            │
-│  ├─▾losses::Vector{Float64} = [2.41, 1.87, 1.55] ││                                  │
-│▌ │ ├─ [1]::Float64 = 2.41                        ││───────────────────────────────── │
-│  │ ├─ [2]::Float64 = 1.87                        ││2.41                              │
-│  │ └─ [3]::Float64 = 1.55                        ││                                  │
-│  └─▾notes::Dict{Symbol, Any} = Dict{Symbol, Any}…││                                  │
-│    ├─ :host::String = "gpu-03"                   ││                                  │
-│    └─ :seed::Int64 = 1234                        ││                                  │
-│                                                  ││                                  │
-╰──────────────────────────────────────────────────╯╰──────────────────────────────────╯
- ↑↓ move ←→ fold ⏎ toggle / search m view y path ⇥ pane ? help q quit     run.losses[1]
+╭─  object  ───────────────────────  13 rows  ─╮╭─  detail  ───────────────────  [1]  ─╮
+│  ▾run::Run = Run("exp-042", Config(0.003, 50…││path     run.losses[1]                │
+│  ├─ name::String = "exp-042"                 ││type     Float64                      │
+│  ├─▾config::Config = Config(0.003, 50, [:bas…││kind     primitive                    │
+│  │ ├─ lr::Float64 = 0.003                    ││parts    0                            │
+│  │ ├─ epochs::Int64 = 50                     ││sizeof   8 bytes                      │
+│  │ └─▸tags::Vector{Symbol} = [:baseline, :ad…││super    AbstractFloat                │
+│  ├─▾losses::Vector{Float64} = [2.41, 1.87, 1…││                                      │
+│▌ │ ├─ [1]::Float64 = 2.41                    ││───────────────────────────────────── │
+│  │ ├─ [2]::Float64 = 1.87                    ││2.41                                  │
+│  │ └─ [3]::Float64 = 1.55                    ││                                      │
+│  └─▾notes::Dict{Symbol, An… = Dict{Symbol, A…││                                      │
+│    ├─ :host::String = "gpu-03"               ││                                      │
+│    └─ :seed::Int64 = 1234                    ││                                      │
+│                                              ││                                      │
+╰──────────────────────────────────────────────╯╰──────────────────────────────────────╯
+ ↑↓ move ←→ fold ⏎ toggle / search a anomaly M memory m view y path       run.losses[1]
 ```
 
 ## Getting a value back out
@@ -98,8 +98,12 @@ walks the object.
 
 `narcissus(SomeType)` shows the fields and their types, recursively — a
 readable map of an unfamiliar package. `narcissus(SomePackage)` shows a
-module's public API, and `m` drops into everything it defines. See
-[the interface page](@ref interface) for both.
+module's public API, `m` drops into everything it defines, and `f` narrows the
+listing to functions, types, submodules or values in turn.
+
+A function decomposes into its methods, and its docstring goes in the detail
+pane — as do a type's and a module's. See [the interface page](@ref interface)
+for how all of this is just [`components`](@ref) methods.
 
 ## Printing without a terminal
 
@@ -118,26 +122,26 @@ and the identical ones folded away, so the shape of the difference is the first
 thing you see.
 
 ```text
-╭─  comparison  ───────────────────────  18 rows  ─╮╭─  detail  ──────────────  name  ─╮
-│  ▾~ before ⇄ after::Run = Run("exp-042", Config…█││status   changed                  │
-│▌ ├─ ~ name::String = "exp-042" → "exp-043"      █││before   before.name              │
-│  ├─▾~ config::Config = Config(0.003, 50, [:base…█││after    after.name               │
-│  │ ├─ ~ lr::Float64 = 0.003 → 0.001             █││parts    0                        │
-│  │ ├─ · epochs::Int64 = 50                      █││                                  │
-│  │ └─▾~ tags::Vector{Symbol} = [:baseline, :ada…█││─── before ────────────────────── │
-│  │   ├─ · [1]::Symbol = :baseline               █││type     String                   │
-│  │   ├─ · [2]::Symbol = :adamw                  █││"exp-042"                         │
-│  │   └─ + [3]::Symbol = :warmup                 █││                                  │
-│  ├─▾~ losses::Vector{Float64} = [2.41, 1.87, 1.…█││─── after ─────────────────────── │
-│  │ ├─ · [1]::Float64 = 2.41                     █││type     String                   │
-│  │ ├─ ~ [2]::Float64 = 1.87 → 1.8               █││"exp-043"                         │
-│  │ ├─ · [3]::Float64 = 1.55                     █││                                  │
-│  │ └─ + [4]::Float64 = 1.02                     █││                                  │
-│  └─▾~ notes::Dict{Symbol, Any} = Dict{Symbol, A…█││                                  │
-│    ├─ - :host::String = "gpu-03"                █││                                  │
-│    ├─ · :seed::Int64 = 1234                     │││                                  │
-╰──────────────────────────────────────────────────╯╰──────────────────────────────────╯
- ↑↓ move ←→ fold d next diff e expand / search m view y path ? help q quit  before.name
+╭─  comparison  ──────────────────  ~8 +3 -1  ─╮╭─  detail  ──────────────────  name  ─╮
+│  ▾~ before ⇄ after::Run = Run("exp-042", Co…█││status   changed                      │
+│▌ ├─ ~ name::String = "exp-042" → "exp-043"  █││before   before.name                  │
+│  ├─▾~ config::Config = Config(0.003, 50, [:…█││after    after.name                   │
+│  │ ├─ ~ lr::Float64 = 0.003 → 0.001         █││parts    0                            │
+│  │ ├─ · epochs::Int64 = 50                  █││                                      │
+│  │ └─▾~ tags::Vector{Symbol} = [:baseline, …█││─── before ────────────────────────── │
+│  │   ├─ · [1]::Symbol = :baseline           █││type     String                       │
+│  │   ├─ · [2]::Symbol = :adamw              █││"exp-042"                             │
+│  │   └─ + [3]::Symbol = :warmup             █││                                      │
+│  ├─▾~ losses::Vector{Float6… = [2.41, 1.87,…█││─── after ─────────────────────────── │
+│  │ ├─ · [1]::Float64 = 2.41                 █││type     String                       │
+│  │ ├─ ~ [2]::Float64 = 1.87 → 1.8           █││"exp-043"                             │
+│  │ ├─ · [3]::Float64 = 1.55                 █││                                      │
+│  │ └─ + [4]::Float64 = 1.02                 █││                                      │
+│  └─▾~ notes::Dict{Symbol, A… = Dict{Symbol,…█││                                      │
+│    ├─ - :host::String = "gpu-03"            █││                                      │
+│    ├─ · :seed::Int64 = 1234                 │││                                      │
+╰──────────────────────────────────────────────╯╰──────────────────────────────────────╯
+ ↑↓ move d next diff f fold same e expand / search m view y path ? help     before.name
 ```
 
 | Marker | Colour | Meaning                     |
@@ -189,7 +193,7 @@ to decompose.
 | `a` / `A`          | Next / previous anomaly                             |
 | `M`                | Show retained size instead of values                |
 | `d` / `D`          | Next / previous difference (when comparing)         |
-| `f`                | Hide the branches that matched (when comparing)     |
+| `f`                | Narrow the view — hide matched branches, or filter a module |
 | `m`                | Switch between the semantic and field views         |
 | `Tab`              | Move focus between the tree and the detail pane     |
 | `y` / `Y`          | Copy the path expression / the printed value        |
@@ -197,8 +201,9 @@ to decompose.
 | `?`                | Key help                                            |
 | `q` / `Ctrl+C`     | Quit, returning the selected value                  |
 
-The mouse works too: click to select, click again to fold, wheel to scroll.
-`Ctrl+T` opens Tachikoma's theme picker.
+The mouse works too: click to select, click again to fold, wheel to scroll, and
+drag the border between the panes to resize them — right-click it to restore the
+default. `Ctrl+T` opens Tachikoma's theme picker.
 
 ## How the traversal behaves
 

@@ -229,3 +229,77 @@ end
     forget_modules!()
     @test module_names(Narcissus) == public
 end
+
+@testitem "a function decomposes into its methods" tags=[:unit] setup=[Fixtures] begin
+    f(x::Int) = x
+    f(x::String, y::Float64) = x
+    f(x) = x
+
+    @test has_semantic_view(f)
+    @test n_components(Semantic(), f) == 3
+
+    kids = window(f, 1, 10)
+    @test all(k -> k.value isa Method, kids)
+    @test any(k -> k.key == "(::Int64)", kids)
+    @test any(k -> k.key == "(::String, ::Float64)", kids)
+    @test all(k -> startswith(k.template, "collect(methods({}))["), kids)
+
+    # The field view is what a closure captured — nothing, here.
+    @test n_components(Fields(), f) == 0
+
+    closure = let a = 41
+        x -> x + a
+    end
+    @test n_components(Fields(), closure) == 1     # `a` was captured
+end
+
+@testitem "module bindings sort into kinds" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: binding_kind, kind_label, BINDING_KINDS
+
+    @test binding_kind(Base) === :module
+    @test binding_kind(Int) === :type
+    @test binding_kind(sin) === :function
+    @test binding_kind(42) === :value
+    @test BINDING_KINDS[1] === :all
+    @test kind_label(:function) == "functions"
+    @test kind_label(:value) == "values"
+    @test kind_label(:all) == "all"
+end
+
+@testitem "documentation is found through the binding" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: docstring, doc_binding
+
+    docs = docstring(Narcissus.components)
+    @test docs !== nothing
+    @test occursin("extension point", docs)
+
+    @test docstring(Narcissus.Component) !== nothing
+    @test docstring(Narcissus) !== nothing
+
+    # A closure has no binding to file documentation under.
+    a = 1
+    @test doc_binding(x -> x + a) === nothing
+    @test docstring(x -> x + a) === nothing
+    @test doc_binding(42) === nothing
+    @test docstring(42) === nothing
+end
+
+@testitem "docstrings render as markdown" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: docstring, strip_ansi
+
+    coloured = docstring(Narcissus.components; width=70)
+    @test coloured !== nothing
+    @test occursin('\e', coloured)                # formatting arrived as ANSI
+
+    plain = strip_ansi(coloured)
+    @test !occursin('\e', plain)
+    @test !occursin("**", plain)                  # rendered, not raw markdown
+    @test occursin("List the parts of", plain)
+    @test occursin("•", plain)                    # a rendered bullet list
+
+    # Prose is wrapped to the width asked for — code blocks are Julia's and
+    # are left alone, so compare line counts rather than assert a hard bound.
+    narrow = strip_ansi(docstring(Narcissus.components; width=40))
+    wide = strip_ansi(docstring(Narcissus.components; width=100))
+    @test count(==('\n'), narrow) > count(==('\n'), wide)
+end

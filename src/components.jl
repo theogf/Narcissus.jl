@@ -398,6 +398,37 @@ function _module_component(m::Module, name::Symbol)
         Component(s, tpl, Undef(); kind=:field)
 end
 
+# ── Functions: a function is its methods ─────────────────────────────
+
+components(::Semantic, f::Function) = _method_components(f)
+component_count(::Semantic, f::Function) = length(methods(f))
+# The field view of a function is what the closure captured — usually nothing,
+# and interesting exactly when it is not.
+has_semantic_view(::Function) = true
+
+function _method_components(@nospecialize(f))
+    ms = collect(methods(f))
+    (Component(_method_key(ms[i]), "collect(methods({}))[$i]", ms[i]; kind=:index)
+     for i in eachindex(ms))
+end
+
+"""
+    _method_key(m::Method) -> String
+
+A method's argument signature, `(::Int64, ::String)`, with the function's own
+type dropped — it is the same for every row and the tree already says which
+function you are looking at.
+"""
+function _method_key(m::Method)
+    try
+        sig = Base.unwrap_unionall(m.sig)
+        args = sig.parameters[2:end]
+        "(" * join(("::" * string(a) for a in args), ", ") * ")"
+    catch
+        "(…)"
+    end
+end
+
 # ── Semantic mode: what the value means ──────────────────────────────
 
 function components(::Semantic, @nospecialize(x))

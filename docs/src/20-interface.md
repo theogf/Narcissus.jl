@@ -67,6 +67,20 @@ Anything without a definite layout — an abstract type, a `UnionAll`, a `Union`
 — has nothing to show and is a leaf. Paths are `fieldtype(fieldtype(T, :cfg), :lr)`,
 which evaluates.
 
+A **function** decomposes into its methods, keyed by their argument signatures:
+
+```text
+▾ components::function = components (generic function with 13 methods)
+├─ (::Semantic, ::Module)::Method = components(::Semantic, m::Module) @ Narcissus …
+├─ (::Semantic, ::Diff)::Method   = components(::Semantic, d::Diff) @ Narcissus …
+└─ (::Semantic, ::Any)::Method    = components(::Semantic, x) @ Narcissus …
+```
+
+Its *field* view is what the closure captured — usually nothing, and
+interesting exactly when it is not. The detail pane shows the function's
+docstring, reached through its binding rather than its value, because that is
+where Julia files documentation. Types and modules get theirs the same way.
+
 A **module** is the one place the two modes map onto something people already
 have names for:
 
@@ -76,7 +90,9 @@ have names for:
 | `Fields`   | everything it defines — internals, imports, the lot    |
 
 So `narcissus(SomePackage)` is a browsable API listing, and `m` drops you into
-the internals. The module's own name is filtered out (every module exports
+the internals. Because a package's names are a jumble of four different kinds
+of thing, `f` narrows the listing to one at a time — functions, then types,
+then modules, then plain values — using [`binding_kind`](@ref). The module's own name is filtered out (every module exports
 itself, and a row leading back to where you already are is noise), and the
 binding lists are memoised — press `r` on a module node after defining
 something new to re-read it.
@@ -256,4 +272,5 @@ Full docstrings for all of the above live on the [Reference](@ref reference)
 page: [`components`](@ref), [`component_count`](@ref),
 [`has_semantic_view`](@ref), [`is_leaf`](@ref), [`Component`](@ref),
 [`ExplorationMode`](@ref), [`Undef`](@ref), [`AccessError`](@ref),
-[`register_semantic!`](@ref), [`module_names`](@ref).
+[`register_semantic!`](@ref), [`module_names`](@ref),
+[`binding_kind`](@ref), [`docstring`](@ref).

@@ -117,3 +117,60 @@ function share_bar(fraction::Real, width::Int=8)
     filled = round(Int, fraction * width)
     "▕" * "█"^filled * "·"^(width - filled) * "▏"
 end
+
+# ── Documentation ────────────────────────────────────────────────────
+
+"Drop ANSI escapes, for testing what a rendering actually says."
+strip_ansi(s::AbstractString) = replace(s, r"\e\[[0-9;]*m" => "")
+
+"""
+    docstring(x; width=80, color=true) -> Union{Nothing,String}
+
+The docstring attached to a function, type or module, rendered as Markdown, or
+`nothing` when there is none.
+
+Reached through the binding rather than the value, which is how Julia stores
+docs: a generic function does not carry its own documentation, the name it is
+bound to does. Anonymous functions and closures have no such binding and come
+back `nothing`.
+
+Rendering goes through Julia's own Markdown writer at the given `width`, so
+headers, emphasis, lists and code blocks come out formatted rather than as raw
+`**asterisks**`. The formatting arrives as ANSI escapes, which
+`Tachikoma.parse_ansi` turns into styled spans — the detail pane shows what
+`?components` shows in the REPL. Use [`strip_ansi`](@ref) for the bare text.
+
+`color=false` suppresses the Markdown writer's own colouring; syntax
+highlighting inside code blocks comes from Julia and stays either way.
+"""
+function docstring(@nospecialize(x); width::Int=80, color::Bool=true)
+    binding = doc_binding(x)
+    binding === nothing && return nothing
+    try
+        io = IOBuffer()
+        context = IOContext(io, :color => color, :limit => true,
+                            :displaysize => (40, max(20, width)))
+        show(context, MIME"text/plain"(), Base.Docs.doc(binding))
+        text = String(take!(io))
+        plain = strip_ansi(text)
+        (occursin("No documentation found", plain) || isempty(strip(plain))) &&
+            return nothing
+        text
+    catch
+        nothing
+    end
+end
+
+"The `Docs.Binding` a value's documentation would be filed under."
+doc_binding(@nospecialize(x)) = nothing
+
+function doc_binding(x::Union{Function,Type,Module})
+    try
+        name = nameof(x)
+        # A closure's `nameof` is a gensym like `#7`; there is no binding.
+        startswith(String(name), "#") && return nothing
+        Base.Docs.Binding(parentmodule(x), name)
+    catch
+        nothing
+    end
+end
