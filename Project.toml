@@ -1,0 +1,14 @@
+name = "Narcissus"
+uuid = "572f1241-6902-50d0-b42e-e4656d46e70a"
+authors = ["Théo Galy-Fajou <theo.galyfajou@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+Tachikoma = "468859d6-42d8-48b7-8ad9-1d312e0e3b0a"
+
+[workspace]
+projects = ["test", "docs"]
+
+[compat]
+Tachikoma = "2.5"
+julia = "1.10"

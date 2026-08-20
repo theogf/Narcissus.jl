@@ -1,0 +1,37 @@
+"""
+    Narcissus
+
+A terminal UI for looking at Julia objects: point it at a value and walk its
+fields, elements and entries, one level at a time.
+
+```julia
+using Narcissus
+narcissus(my_object)
+```
+
+Built on [Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl).
+"""
+module Narcissus
+
+using Tachikoma
+
+# Pulls Tachikoma's callback generics into this module — `view`, `update!`,
+# `should_quit`, `init!`, `cleanup!` and friends — so the methods below extend
+# them rather than shadowing them with unrelated local functions the app loop
+# would never call.
+@tachikoma_app
+
+export narcissus
+# The decomposition interface — overload these to teach Narcissus a new type.
+export components, component_count, has_semantic_view, is_leaf
+export Component, ExplorationMode, Semantic, Fields
+export Diff, Absent, diff_status
+
+include("components.jl")
+include("compare.jl")
+include("nodes.jl")
+include("format.jl")
+include("tree_widget.jl")
+include("explorer.jl")
+
+end

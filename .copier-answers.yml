@@ -1,0 +1,12 @@
+# Changes here will be overwritten by Copier
+Authors: Théo Galy-Fajou <theo.galyfajou@gmail.com>
+JuliaMinVersion: '1.10'
+License: MIT
+LicenseCopyrightHolders: Théo Galy-Fajou
+PackageName: Narcissus
+PackageOwner: theogf
+PackageUUID: 572f1241-6902-50d0-b42e-e4656d46e70a
+StrategyConfirmIncluded: false
+StrategyLevel: 1
+StrategyReviewExcluded: false
+_src_path: /home/theo/.julia/packages/BestieTemplate/MPEqY

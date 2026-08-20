@@ -1,0 +1,261 @@
+@testsnippet AppHarness begin
+    using Tachikoma
+    using Narcissus: Explorer, ObjectTree, root_node, current_node, selected_value,
+                     invalidate!, rows, node_text, search!, toggle!
+    import Tachikoma: view, update!
+
+    "Render a model into a TestBackend so its screen can be inspected."
+    function draw(m, width::Int=90, height::Int=20)
+        rect = Rect(1, 1, width, height)
+        buf = Buffer(rect)
+        view(m, Frame(buf, rect, GraphicsRegion[], PixelSnapshot[]))
+        tb = TestBackend(width, height)
+        tb.buf.content .= buf.content
+        tb
+    end
+
+    screen(tb) = join((row_text(tb, y) for y in 1:tb.height), "\n")
+
+    press!(m, k) = (update!(m, KeyEvent(k)); m)
+
+    struct Config
+        lr::Float64
+        tags::Vector{Symbol}
+    end
+
+    mutable struct Run
+        name::String
+        config::Config
+        losses::Vector{Float64}
+    end
+
+    sample_run() = Run("exp-1", Config(0.01, [:fast, :noisy]), [3.0, 2.0, 1.0])
+
+    explorer(obj, name="run"; kwargs...) =
+        Explorer(; tree = ObjectTree(root_node(obj, name; kwargs...)))
+end
+
+@testitem "the explorer renders both panes" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    s = screen(draw(m))
+    @test occursin("object", s)
+    @test occursin("detail", s)
+    @test occursin("run::", s) && occursin("Run", s)
+    @test occursin("path", s)
+    @test occursin("q quit", s)
+end
+
+@testitem "arrow keys walk into the object" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, :right)                      # expand the root
+    @test length(rows(m.tree)) == 4
+    press!(m, :down); press!(m, :down)     # onto `config`
+    @test current_node(m.tree).key == "config"
+    press!(m, :right)                      # into it
+    press!(m, :down)
+    @test current_node(m.tree).path == "run.config.lr"
+    @test selected_value(m) == 0.01
+
+    press!(m, :left)                       # back out to the parent
+    @test current_node(m.tree).key == "config"
+end
+
+@testitem "vim keys mirror the arrows" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, 'l'); press!(m, 'j'); press!(m, 'j'); press!(m, 'l')
+    @test current_node(m.tree).key == "config"
+    @test current_node(m.tree).expanded
+    press!(m, 'h')
+    @test !current_node(m.tree).expanded
+    press!(m, 'G')
+    @test current_node(m.tree) === last(rows(m.tree)).node
+    press!(m, 'g')
+    @test m.tree.selected == 1
+end
+
+@testitem "search jumps to a matching row" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, 'e')                          # expand a couple of levels
+    press!(m, '/')
+    @test m.searching
+    for c in "noisy"
+        press!(m, c)
+    end
+    press!(m, :enter)
+    @test !m.searching
+    @test m.tree.query == "noisy"
+    @test occursin("noisy", node_text(current_node(m.tree)))
+
+    press!(m, :escape)                      # first escape only clears the search
+    @test isempty(m.tree.query)
+    @test !m.quit
+end
+
+@testitem "elided rows load the next window" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(collect(1:250), "v"; limit=100)
+    press!(m, :right)
+    @test length(rows(m.tree)) == 102
+    press!(m, 'G')                          # onto the `…` row
+    @test current_node(m.tree).kind === :elided
+    press!(m, :enter)
+    @test length(rows(m.tree)) == 202
+    @test occursin("50 more", node_text(last(rows(m.tree)).node))
+end
+
+@testitem "focus moves to the detail pane" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(collect(1:400), "v")
+    draw(m)                                  # populate the detail pane
+    press!(m, :tab)
+    @test m.focus === :detail
+    press!(m, :down); press!(m, :down)
+    draw(m)
+    @test m.detail.scroll_offset > 0
+    press!(m, 'g')
+    @test m.detail.scroll_offset == 0
+end
+
+@testitem "help overlay opens and any key closes it" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, '?')
+    @test m.show_help
+    s = screen(draw(m))
+    @test occursin("keys", s)
+    @test occursin("copy the path expression", s)
+    press!(m, :escape)
+    @test !m.show_help
+    @test !m.quit
+end
+
+@testitem "quitting returns the selected value" tags=[:unit] setup=[AppHarness] begin
+    r = sample_run()
+    m = explorer(r)
+    press!(m, :right); press!(m, :down)
+    @test selected_value(m) == "exp-1"
+    press!(m, 'q')
+    @test Narcissus.should_quit(m)
+end
+
+@testitem "reload picks up mutation" tags=[:unit] setup=[AppHarness] begin
+    r = sample_run()
+    m = explorer(r)
+    press!(m, :right); press!(m, :down)
+    @test occursin("exp-1", node_text(current_node(m.tree)))
+
+    r.name = "exp-2"
+    press!(m, 'r')
+    @test occursin("exp-2", node_text(current_node(m.tree)))
+    @test m.notice == "reloaded"
+end
+
+@testitem "mouse clicks select and toggle" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    draw(m)
+    click(x, y) = update!(m, MouseEvent(x, y, mouse_left, mouse_press,
+                                        false, false, false))
+    click(4, 2)                              # the row already under the cursor
+    @test m.tree.selected == 1
+    @test m.tree.root.expanded               # ... so the click toggled it open
+    @test length(rows(m.tree)) == 4
+
+    draw(m)
+    click(4, 4)                              # a different row: select only
+    @test m.tree.selected == 3
+    @test !current_node(m.tree).expanded
+    click(4, 4)                              # click again to open it
+    @test current_node(m.tree).expanded
+end
+
+@testitem "degenerate terminal sizes do not throw" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    for (w, h) in ((6, 3), (10, 5), (20, 6), (200, 60))
+        @test draw(m, w, h) isa TestBackend
+    end
+end
+
+@testitem "m switches a row between its two views" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: Semantic, Fields
+
+    m = explorer(Dict(:a => 1, :b => 2), "d")
+    press!(m, :right)
+    @test length(rows(m.tree)) == 3               # the two entries
+    @test occursin(":a", screen(draw(m)))
+
+    press!(m, 'm')
+    @test current_node(m.tree).mode isa Fields
+    @test m.notice == "d: fields view"
+    s = screen(draw(m))
+    @test occursin("slots", s)                    # storage, not entries
+    @test occursin("·fields", s)                  # the row says so
+    @test occursin("m: semantic", s)              # and so does the detail pane
+
+    press!(m, 'm')
+    @test current_node(m.tree).mode isa Semantic
+    @test occursin(":a", screen(draw(m)))
+end
+
+@testitem "m says so when there is nothing to switch to" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, 'm')
+    @test m.notice == "run has only one view"
+    @test !occursin("·fields", screen(draw(m)))
+end
+
+@testitem "field-mode paths stay pasteable" tags=[:unit] setup=[AppHarness] begin
+    m = explorer([1.0, 2.0], "v")
+    press!(m, 'm')
+    press!(m, :right)
+    press!(m, :down)
+    @test current_node(m.tree).path == "v.ref"
+end
+
+@testitem "comparison mode marks and navigates differences" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!,
+                     node_status
+
+    before = sample_run()
+    after = sample_run()
+    after.losses = [3.0, 2.0, 0.5]
+
+    root = root_node(Diff(before, after), "before")
+    root.key = "before ⇄ after"
+    expand_differences!(root, 8)
+    m = Explorer(; tree = ObjectTree(root), names = ("before", "after"))
+
+    s = screen(draw(m))
+    @test occursin("comparison", s)          # the pane says what it is
+    @test occursin("next diff", s)           # and the status bar offers `d`
+    @test occursin("→", s)                   # changed rows show both sides
+
+    # `d` walks the differing rows and skips the identical ones.
+    press!(m, 'd')
+    @test node_status(current_node(m.tree)) !== :same
+    seen = String[]
+    for _ in 1:4
+        press!(m, 'd')
+        push!(seen, current_node(m.tree).path)
+        @test node_status(current_node(m.tree)) !== :same
+    end
+    @test "before.losses[3]" in seen
+
+    # The detail pane addresses both sides by name.
+    d = screen(draw(m))
+    @test occursin("before", d) && occursin("after", d)
+    @test occursin("status", d)
+end
+
+@testitem "d does nothing outside a comparison" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, 'd')
+    @test occursin("not comparing", m.notice)
+end
+
+@testitem "identical objects say so and stay folded" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!
+
+    a = sample_run()
+    root = root_node(Diff(a, deepcopy(a)), "a")
+    expand_differences!(root, 8)
+    m = Explorer(; tree = ObjectTree(root), names = ("a", "b"))
+    @test length(rows(m.tree)) == 1
+    @test occursin("identical", screen(draw(m)))
+end
