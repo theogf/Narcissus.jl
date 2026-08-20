@@ -102,7 +102,7 @@ end
 end
 
 @testitem "atomic values never decompose" tags=[:unit] setup=[Fixtures] begin
-    for v in (1, 1.5, "text", :sym, 'c', nothing, missing, Int, Base)
+    for v in (1, 1.5, "text", :sym, 'c', nothing, missing, Int)
         @test !expandable(Semantic(), v)
         @test isempty(window(v, 1, 10))
     end
@@ -180,4 +180,52 @@ end
     got = component_window(Semantic(), Hostile(), 1, 10)
     @test length(got) == 1
     @test got[1].value isa AccessError
+end
+
+@testitem "a type decomposes into its fields' types" tags=[:unit] setup=[Fixtures] begin
+    kids = window(Branch, 1, 10)
+    @test [k.key for k in kids] == ["id", "leaf", "data", "tags"]
+    @test kids[2].value === Leaf                       # the field's *type*
+    @test kids[2].template == "fieldtype({}, :leaf)"
+
+    # A tuple type's fields are positional.
+    @test [k.key for k in window(Tuple{Int,String}, 1, 10)] == ["[1]", "[2]"]
+
+    # Nothing with an indefinite layout has anything to show.
+    for T in (AbstractVector, Integer, Union{Int,String}, Int)
+        @test n_components(Semantic(), T) == 0
+    end
+    @test !has_semantic_view(Branch)                   # one view, not two
+end
+
+@testitem "a module decomposes into its bindings" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: module_names, forget_modules!
+
+    public = module_names(Narcissus)
+    everything = module_names(Narcissus; all=true)
+    @test :narcissus in public
+    @test :components in public
+    @test length(everything) > length(public)
+    @test :DEFAULT_LIMIT in everything                 # an internal
+    @test :DEFAULT_LIMIT ∉ public
+    @test :Narcissus ∉ public                          # never itself
+    @test all(n -> !startswith(String(n), "#"), everything)
+
+    # The two modes are the public API and the whole contents.
+    @test has_semantic_view(Narcissus)
+    @test n_components(Semantic(), Narcissus) == length(public)
+    @test n_components(Fields(), Narcissus) == length(everything)
+
+    kids = window(Narcissus, 1, 500)
+    entry = only(k for k in kids if k.key == "narcissus")
+    @test entry.value === Narcissus.narcissus
+    @test entry.template == "{}.narcissus"
+
+    # Operator-named bindings still get a usable path.
+    ops = component_window(Fields(), Base, 1, 2000)
+    bang = only(k for k in ops if k.key == "!=")
+    @test bang.template == "getfield({}, Symbol(\"!=\"))"
+
+    forget_modules!()
+    @test module_names(Narcissus) == public
 end

@@ -20,14 +20,23 @@ const HELP_TEXT = """
   r                re-read the selected node from the live object
   ? / q            this help / quit, returning the selected value
 
+  Find
+    a / A            jump to the next / previous NaN, Inf, missing, empty
+                     container, #undef or unreadable value
+    f                inside a module, list only functions / types / modules
+                     / values in turn
+    M                show what each row costs in memory instead of its value
+
   Comparing (narcissus(x, y))
-    · = ~ + -        identical, changed, added on the right, removed
+    · green          the two sides are identical
+    ~ + - ! red      changed, added on the right, removed, unrelated types
     d / D            jump to the next / previous difference
+    f                hide the branches that matched
     e                open every differing branch under the cursor
 
-  Long containers arrive one window at a time — open the `…` row at
-  the end of a list to pull in the next batch. Search only looks at
-  rows that are currently on screen.
+  Long containers arrive one window at a time — open the `…` row at the
+  end of a list to pull in the next batch. Searching looks at what is on
+  screen first, then opens the object up to keep looking.
 """
 
 Base.@kwdef mutable struct Explorer <: Model
@@ -99,6 +108,30 @@ function update!(m::Explorer, e::KeyEvent)
         elseif !search!(m.tree, m.tree.query, e.char == 'n' ? 1 : -1)
             notify!(m, "no match for \"$(m.tree.query)\"")
         end
+    elseif e.key == :char && (e.char == 'a' || e.char == 'A')
+        outcome = hunt_anomaly!(m.tree, e.char == 'a' ? 1 : -1)
+        m.revision += 1
+        if outcome === :none
+            notify!(m, "nothing suspicious found")
+        elseif outcome === :revealed
+            notify!(m, "opened $(current_node(m.tree).path)")
+        end
+    elseif e.key == :char && e.char == 'M'
+        notify!(m, toggle_memory!(m.tree) ? "showing retained size" :
+                                            "showing values")
+    elseif e.key == :char && e.char == 'f'
+        # One key, one meaning — "narrow this view" — and two things worth
+        # narrowing: a comparison, and a module's jumble of bindings.
+        if comparing(m)
+            m.tree.hide_same = !m.tree.hide_same
+            invalidate!(m.tree)
+            clamp_selection!(m.tree)
+            notify!(m, m.tree.hide_same ? "hiding what matched" : "showing everything")
+        elseif in_module(m.tree)
+            notify!(m, "showing $(kind_label(cycle_kinds!(m.tree)))")
+        else
+            notify!(m, "nothing to filter here")
+        end
     elseif e.key == :char && (e.char == 'd' || e.char == 'D')
         if !comparing(m)
             notify!(m, "not comparing — open with narcissus(x, y)")
@@ -160,16 +193,22 @@ function search_key!(m::Explorer, e::KeyEvent)
     elseif e.key == :enter
         m.searching = false
         m.tree.query = text(m.input)
-        isempty(m.tree.query) ||
-            search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1) ||
-            notify!(m, "no match for \"$(m.tree.query)\"")
+        if !isempty(m.tree.query)
+            # Enter is where the search is allowed to go looking in the parts of
+            # the object nobody has opened yet; typing stays instant.
+            outcome = search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1)
+            m.revision += 1
+            outcome === :none && notify!(m, "no match for \"$(m.tree.query)\"")
+            outcome === :revealed &&
+                notify!(m, "found in $(current_node(m.tree).path)")
+        end
     else
         handle_key!(m.input, e)
         m.tree.query = text(m.input)
         # Incremental: re-run from just before the cursor so the current row
         # stays put while it still matches.
         isempty(m.tree.query) ||
-            search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1)
+            search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1, deep=false)
     end
     nothing
 end
@@ -232,7 +271,9 @@ function view(m::Explorer, f::Frame)
 
     tree_block = Block(;
         title = comparing(m) ? " comparison " : " object ",
-        title_right = " $nrows row" * (nrows == 1 ? " " : "s "),
+        title_right = comparing(m) ? diff_tally(m.tree) :
+                      m.tree.kinds !== :all ? " $(kind_label(m.tree.kinds)) only " :
+                      " $nrows row" * (nrows == 1 ? " " : "s "),
         border_style = tstyle(m.focus === :tree ? :border_focus : :border),
     )
     render(m.tree, render(tree_block, cols[1], f.buffer), f.buffer)
@@ -254,6 +295,17 @@ function view(m::Explorer, f::Frame)
 
     m.notice_ttl > 0 && (m.notice_ttl -= 1)
     nothing
+end
+
+"A one-line tally of what differs on screen, for the pane's title bar."
+function diff_tally(t::ObjectTree)
+    c = difference_counts(t)
+    parts = String[]
+    c.changed > 0 && push!(parts, "~$(c.changed)")
+    c.added > 0 && push!(parts, "+$(c.added)")
+    c.removed > 0 && push!(parts, "-$(c.removed)")
+    c.mistyped > 0 && push!(parts, "!$(c.mistyped)")
+    isempty(parts) ? " identical " : " " * join(parts, " ") * " "
 end
 
 """
@@ -279,12 +331,12 @@ function status_bar(m::Explorer, width::Int)
 
     left = Span[]
     hints = comparing(m) ?
-        (("↑↓", "move"), ("←→", "fold"), ("d", "next diff"), ("e", "expand"),
+        (("↑↓", "move"), ("d", "next diff"), ("f", "fold same"), ("e", "expand"),
          ("/", "search"), ("m", "view"), ("y", "path"), ("?", "help"),
          ("q", "quit")) :
         (("↑↓", "move"), ("←→", "fold"), ("⏎", "toggle"), ("/", "search"),
-         ("m", "view"), ("y", "path"), ("⇥", "pane"), ("?", "help"),
-         ("q", "quit"))
+         ("a", "anomaly"), ("M", "memory"), ("m", "view"), ("y", "path"),
+         ("?", "help"), ("q", "quit"))
     for (k, label) in hints
         cost = textwidth(k) + textwidth(label) + 2
         cost > budget && break
@@ -390,4 +442,53 @@ function narcissus(@nospecialize(x), @nospecialize(y);
     node_status(root) === :same && notify!(m, "the two objects are identical")
     app(m; kwargs...)
     selected_value(m)
+end
+
+"""
+    @narcissus expr
+    @narcissus expr₁ expr₂
+    @narcissus expr key=value...
+
+Explore (or compare) the value of an expression, naming the root after the
+expression itself.
+
+The point is the paths. `narcissus(model.layers[2])` roots every path at a
+generic `obj`, so `y` hands you `obj.weights` — true, but not something you can
+paste anywhere. The macro captures the source text instead:
+
+```julia
+julia> @narcissus model.layers[2]      # `y` now yields model.layers[2].weights
+julia> @narcissus before after         # rooted at `before` and `after`
+julia> @narcissus model mode=:fields   # keyword arguments pass straight through
+```
+
+An explicit `name` or `names` wins over the captured text.
+"""
+macro narcissus(args...)
+    positional = Any[]
+    options = Any[]
+    for a in args
+        if a isa Expr && a.head === :(=) && a.args[1] isa Symbol
+            push!(options, Expr(:kw, a.args[1], esc(a.args[2])))
+        elseif a isa Expr && a.head === :parameters
+            append!(options, a.args)
+        else
+            push!(positional, a)
+        end
+    end
+    named = Set(o isa Expr ? o.args[1] : o for o in options)
+
+    if length(positional) == 1
+        :name in named ||
+            pushfirst!(options, Expr(:kw, :name, string(positional[1])))
+        return Expr(:call, :narcissus, Expr(:parameters, options...),
+                    esc(positional[1]))
+    elseif length(positional) == 2
+        :names in named || pushfirst!(options, Expr(:kw, :names,
+            (string(positional[1]), string(positional[2]))))
+        return Expr(:call, :narcissus, Expr(:parameters, options...),
+                    esc(positional[1]), esc(positional[2]))
+    end
+    return :(throw(ArgumentError(
+        "@narcissus takes one expression to explore, or two to compare")))
 end

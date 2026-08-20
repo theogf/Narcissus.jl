@@ -16,18 +16,22 @@ mutable struct ObjectTree
     focused::Bool
     indent::Int
     query::String
+    hide_same::Bool
+    show_memory::Bool
+    kinds::Symbol
     last_area::Rect
     _rows::Vector{Row}
     _dirty::Bool
 end
 
 function ObjectTree(root::ObjNode; selected::Int=1, focused::Bool=true, indent::Int=2)
-    ObjectTree(root, selected, 0, focused, indent, "", Rect(), Row[], true)
+    ObjectTree(root, selected, 0, focused, indent, "", false, false, :all,
+               Rect(), Row[], true)
 end
 
 function rows(t::ObjectTree)
     if t._dirty
-        t._rows = flatten(t.root)
+        t._rows = flatten(t.root; hide_same=t.hide_same, kinds=t.kinds)
         t._dirty = false
     end
     t._rows
@@ -52,6 +56,24 @@ end
 
 Tachikoma.focusable(::ObjectTree) = true
 Tachikoma.value(t::ObjectTree) = current_node(t)
+
+"""
+    node_text_cheap(node) -> String
+
+What a row says, without paying for it.
+
+[`node_text`](@ref) renders the value, which means a `show` call — fine for the
+rows on screen, ruinous for a deep walk that visits thousands of nodes it will
+throw away. This matches on the key and the type, plus the value only when some
+earlier render already cached it.
+"""
+function node_text_cheap(n::ObjNode)
+    s = n.key
+    ty = type_string(n)
+    isempty(ty) || (s *= "::" * ty)
+    n._preview === nothing || (s *= " = " * n._preview)
+    s
+end
 
 "Flat text of a row, used for searching."
 function node_text(n::ObjNode)
@@ -163,6 +185,48 @@ function switch_mode!(t::ObjectTree)
 end
 
 """
+    cycle_kinds!(tree) -> Symbol
+
+Step a module listing through `all → functions → types → modules → values`.
+
+A package's exported names are a jumble of four different things, and you are
+usually after one of them. Only rows directly under a module node are filtered
+— see [`flatten`](@ref).
+"""
+function cycle_kinds!(t::ObjectTree)
+    i = something(findfirst(==(t.kinds), BINDING_KINDS), 1)
+    t.kinds = BINDING_KINDS[mod1(i + 1, length(BINDING_KINDS))]
+    invalidate!(t)
+    clamp_selection!(t)
+    t.kinds
+end
+
+"Whether the cursor is on, or inside, a module listing."
+function in_module(t::ObjectTree)
+    n = current_node(t)
+    while n !== nothing
+        n.value isa Module && return true
+        n = n.parent
+    end
+    false
+end
+
+"""
+    toggle_memory!(tree)
+
+Swap the value column for what each row *costs*: its retained size, its share
+of its parent, and a bar to eyeball where the bytes went.
+
+Sizes come from `Base.summarysize`, which walks the whole retained graph — so
+this is a key you press rather than a column that is always there, and the
+answer is cached per node once asked.
+"""
+function toggle_memory!(t::ObjectTree)
+    t.show_memory = !t.show_memory
+    t.show_memory
+end
+
+"""
     reload!(tree) -> Bool
 
 Re-read the node under the cursor: its cached preview, its child count and,
@@ -175,6 +239,7 @@ objects.
 function reload!(t::ObjectTree)
     n = current_node(t)
     n === nothing && return false
+    n.value isa Module && forget_modules!()
     refresh_value!(n)
     n._preview = nothing
     n._status = nothing
@@ -191,56 +256,120 @@ function reload!(t::ObjectTree)
     true
 end
 
-# ── Search ───────────────────────────────────────────────────────────
+# ── Search and jumps ─────────────────────────────────────────────────
 
-"""
-    search!(tree, query, dir; from=tree.selected) -> Bool
-
-Move the cursor to the next row (in direction `dir`, `+1` or `-1`) whose text
-matches `query`, wrapping around. Only *visible* rows are searched — the tree
-is lazy, and matching against unloaded children would mean walking the whole
-object graph.
-"""
-function search!(t::ObjectTree, query::AbstractString, dir::Int=1;
-                 from::Int=t.selected)
-    isempty(query) && return false
+"Move the cursor to the next visible row satisfying `predicate`, wrapping."
+function jump!(predicate, t::ObjectTree, dir::Int, from::Int)
     r = rows(t)
     n = length(r)
     n == 0 && return false
-    needle = lowercase(query)
     for step in 1:n
         idx = mod1(from + dir * step, n)
-        if occursin(needle, lowercase(node_text(r[idx].node)))
+        if predicate(r[idx].node)
             t.selected = idx
             return true
         end
     end
     false
+end
+
+"""
+    search!(tree, query, dir; from=tree.selected, deep=true) -> Symbol
+
+Find `query`, returning `:visible` when a row already on screen matched,
+`:revealed` when the tree had to open the object up to find it, or `:none`.
+
+**Names before values.** A parent's preview contains the text of everything
+under it, so matching rendered values first would answer "where is `sigma`?"
+with the root row — technically a match, never the one you meant. Keys and
+types are tried first, on screen and then in the unread object; only when
+nothing is named that way does the value text of the visible rows count.
+
+The deep walk also matches the values of *leaf* rows, which are cheap to
+render. It will not render a container's preview to search it — that is the
+expense the lazy tree exists to avoid.
+"""
+function search!(t::ObjectTree, query::AbstractString, dir::Int=1;
+                 from::Int=t.selected, deep::Bool=true)
+    isempty(query) && return :none
+    needle = lowercase(query)
+
+    named(n) = occursin(needle, lowercase(n.key)) ||
+               occursin(needle, lowercase(type_string(n)))
+    deep_match(n) = named(n) ||
+                    (!n.expandable && occursin(needle, lowercase(preview(n))))
+
+    jump!(named, t, dir, from) && return :visible
+
+    if deep
+        found = find_node(t.root, deep_match)
+        if found !== nothing
+            reveal!(found)
+            invalidate!(t)
+            select_node!(t, found)
+            return :revealed
+        end
+    end
+
+    # Last resort: the rendered value of something already on screen.
+    jump!(n -> occursin(needle, lowercase(node_text(n))), t, dir, from) && return :visible
+    :none
+end
+
+"""
+    hunt_anomaly!(tree, dir; from=tree.selected) -> Symbol
+
+The [`anomaly`](@ref) counterpart of [`search!`](@ref), with the same
+escalation: find the next `NaN`, `Inf`, `missing`, empty container, `#undef` or
+unreadable value, on screen if possible and in the unread object if not.
+"""
+function hunt_anomaly!(t::ObjectTree, dir::Int=1; from::Int=t.selected)
+    here = current_node(t)
+    # Excluding the row already under the cursor is what lets a second press
+    # escalate: wrapping onto itself would otherwise look like a match.
+    suspicious(n) = n !== here && node_anomaly(n) !== nothing
+
+    jump!(suspicious, t, dir, from) && return :visible
+
+    found = find_node(t.root, suspicious)
+    found === nothing && return :none
+    reveal!(found)
+    invalidate!(t)
+    select_node!(t, found)
+    :revealed
 end
 
 """
     next_difference!(tree, dir; from=tree.selected) -> Bool
 
-Move the cursor to the next visible row (in direction `dir`) that is not
-identical on both sides, wrapping around. The comparison counterpart of
-[`search!`](@ref), and visible-rows-only for the same reason.
+Move the cursor to the next visible row that is not identical on both sides.
+Unlike [`search!`](@ref) this does not escalate: the branches that differ were
+opened when the comparison did, and the ones still closed matched.
 """
-function next_difference!(t::ObjectTree, dir::Int=1; from::Int=t.selected)
-    r = rows(t)
-    n = length(r)
-    n == 0 && return false
-    for step in 1:n
-        idx = mod1(from + dir * step, n)
-        if is_difference(node_status(r[idx].node))
-            t.selected = idx
-            return true
-        end
-    end
-    false
-end
+next_difference!(t::ObjectTree, dir::Int=1; from::Int=t.selected) =
+    jump!(n -> is_difference(node_status(n)), t, dir, from)
 
 "Whether this tree is comparing two objects rather than exploring one."
 comparing(t::ObjectTree) = t.root.value isa Diff
+
+"""
+    difference_counts(tree) -> NamedTuple
+
+How many changed, added, removed and type-mismatched rows are on screen. A
+tally of what is visible, which grows as branches are opened — not a claim
+about the whole object, which would mean reading all of it.
+"""
+function difference_counts(t::ObjectTree)
+    changed = added = removed = mistyped = 0
+    for r in rows(t)
+        st = node_status(r.node)
+        st === :changed && (changed += 1)
+        st === :added && (added += 1)
+        st === :removed && (removed += 1)
+        st === :type && (mistyped += 1)
+    end
+    (; changed, added, removed, mistyped)
+end
 
 # ── Mouse ────────────────────────────────────────────────────────────
 
@@ -299,11 +428,22 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
     end
     t.offset = clamp(t.offset, 0, max(0, n - visible))
 
+    # The flag column is only worth its two cells when something can appear in
+    # it. Decided once per frame so every row indents alike.
+    flag_col = comparing(t) || any(i -> let idx = t.offset + i
+            idx <= n && node_anomaly(r[idx].node) !== nothing
+        end, 1:visible)
+
     needs_sb = n > visible
     text_area = needs_sb && rect.width > 1 ?
         Rect(rect.x, rect.y, rect.width - 1, rect.height) : rect
     max_x = right(text_area)
     conn = tstyle(:border, dim=true)
+
+    # The memory column is right-aligned to the pane, so sizes and percentages
+    # line up down the screen. Everything else gets the width that is left.
+    mem_x = max_x - MEMORY_COLUMN_WIDTH + 1
+    text_max_x = t.show_memory ? mem_x - 2 : max_x
 
     for i in 1:visible
         idx = t.offset + i
@@ -344,11 +484,14 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
         cx += 1
         cx > max_x && continue
 
-        # Comparison status. Absent (and costing nothing) outside a diff tree.
-        status = node_status(node)
-        if status !== :none
-            glyph, gstyle = status_marker(status)
-            set_char!(buf, cx, y, glyph, gstyle)
+        # One column, two purposes: in a comparison it carries the diff status,
+        # and otherwise it flags a value worth looking at twice. Both stay blank
+        # when there is nothing to say, so an ordinary tree gains no clutter.
+        if flag_col
+            status = node_status(node)
+            glyph, gstyle = status === :none ? anomaly_marker(node_anomaly(node)) :
+                                               status_marker(status)
+            glyph == ' ' || set_char!(buf, cx, y, glyph, gstyle)
             cx += 2
             cx > max_x && continue
         end
@@ -356,18 +499,30 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
         matched = !isempty(t.query) &&
                   occursin(lowercase(t.query), lowercase(node_text(node)))
         kstyle = matched ? tstyle(:warning, bold=true, underline=true) : key_style(node)
-        cx = set_string!(buf, cx, y, node.key, kstyle; max_x)
+        cx = set_string!(buf, cx, y, node.key, kstyle; max_x=text_max_x)
 
         ty = type_string(node)
-        if !isempty(ty) && cx <= max_x
-            cx = set_string!(buf, cx, y, "::", conn; max_x)
-            cx = set_string!(buf, cx, y, truncate_text(ty, max(8, (max_x - cx) ÷ 2)),
-                             tstyle(:secondary); max_x)
+        if !isempty(ty) && cx <= text_max_x
+            cx = set_string!(buf, cx, y, "::", conn; max_x=text_max_x)
+            type_style = node_status(node) === :type ? tstyle(:error) :
+                                                       tstyle(:secondary)
+            width_for_type = t.show_memory ? text_max_x - cx + 1 :
+                                             max(8, (max_x - cx) ÷ 2)
+            cx = set_string!(buf, cx, y, truncate_text(ty, width_for_type),
+                             type_style; max_x=text_max_x)
         end
 
         # Only worth saying when the row is showing storage instead of meaning.
         if node.mode isa Fields && has_semantic_view(node.value) && cx <= max_x
             cx = set_string!(buf, cx, y, " ·fields", tstyle(:warning, dim=true); max_x)
+        end
+
+        if t.show_memory
+            cm = mem_x
+            for (text, style) in memory_spans(node)
+                cm = set_string!(buf, cm, y, text, style; max_x)
+            end
+            continue
         end
 
         segments = preview_spans(node, selected)

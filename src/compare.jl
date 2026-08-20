@@ -66,6 +66,8 @@ catch
     true
 end
 
+const _TRUST_CACHE = IdDict{Type,Bool}()
+
 """
     trustworthy_equality(T) -> Bool
 
@@ -77,11 +79,10 @@ them, since `==` on a `Vector` defers to its elements. For those, Narcissus
 compares component by component instead, which is both the slower path and
 the one that tells you something. Types that define their own `==` (numbers,
 strings, arrays of bits types) are taken at their word.
-"""
-const _TRUST_CACHE = IdDict{Type,Bool}()
 
-# `which` is a runtime method lookup — microseconds, and this is asked once per
-# value comparison. Memoised, it is asked once per type.
+Memoised per type: the answer needs `which`, a runtime method lookup costing
+microseconds, and it is asked once per value comparison.
+"""
 trustworthy_equality(@nospecialize(T::Type)) =
     get!(() -> _trustworthy_equality(T), _TRUST_CACHE, T)
 

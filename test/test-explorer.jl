@@ -193,7 +193,7 @@ end
     @test occursin(":a", screen(draw(m)))
 end
 
-@testitem "m says so when there is nothing to switch to" tags=[:unit] setup=[AppHarness] begin
+@testitem "m says so when there is one view" tags=[:unit] setup=[AppHarness] begin
     m = explorer(sample_run())
     press!(m, 'm')
     @test m.notice == "run has only one view"
@@ -208,7 +208,7 @@ end
     @test current_node(m.tree).path == "v.ref"
 end
 
-@testitem "comparison mode marks and navigates differences" tags=[:unit] setup=[AppHarness] begin
+@testitem "comparison marks and navigates diffs" tags=[:unit] setup=[AppHarness] begin
     using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!,
                      node_status
 
@@ -249,7 +249,7 @@ end
     @test occursin("not comparing", m.notice)
 end
 
-@testitem "identical objects say so and stay folded" tags=[:unit] setup=[AppHarness] begin
+@testitem "identical objects say so" tags=[:unit] setup=[AppHarness] begin
     using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!
 
     a = sample_run()
@@ -258,4 +258,127 @@ end
     m = Explorer(; tree = ObjectTree(root), names = ("a", "b"))
     @test length(rows(m.tree)) == 1
     @test occursin("identical", screen(draw(m)))
+end
+
+@testitem "search escalates into what is not loaded" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    @test length(rows(m.tree)) == 1                # nothing opened yet
+
+    press!(m, '/')
+    for c in "noisy"
+        press!(m, c)
+    end
+    press!(m, :enter)
+
+    @test occursin("found in", m.notice)
+    @test current_node(m.tree).path == "run.config.tags[2]"
+    # It opened the path to the match and nothing else.
+    @test length(rows(m.tree)) <= 8
+    @test occursin("noisy", screen(draw(m)))
+end
+
+@testitem "a search with no match says so" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, '/')
+    for c in "zzzz"
+        press!(m, c)
+    end
+    press!(m, :enter)
+    @test occursin("no match", m.notice)
+end
+
+@testitem "a hunts anomalies and keeps going" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: node_anomaly
+
+    r = sample_run()
+    r.losses = [3.0, NaN, 1.0]
+    m = explorer((run=r, spare=Float64[]), "s")
+
+    press!(m, 'a')
+    first_hit = current_node(m.tree).path
+    @test node_anomaly(current_node(m.tree)) !== nothing
+
+    press!(m, 'a')
+    @test current_node(m.tree).path != first_hit   # it moved on
+    @test node_anomaly(current_node(m.tree)) !== nothing
+
+    @test occursin("!", screen(draw(m)))           # the flag column is drawn
+end
+
+@testitem "a says so when nothing is suspicious" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(sample_run())
+    press!(m, 'a')
+    @test occursin("nothing suspicious", m.notice)
+end
+
+@testitem "M shows what each row costs" tags=[:unit] setup=[AppHarness] begin
+    m = explorer((small=[1, 2], big=rand(20_000)), "s")
+    press!(m, :right)
+
+    press!(m, 'M')
+    @test m.tree.show_memory
+    @test occursin("retained size", m.notice)
+    s = screen(draw(m, 120, 12))
+    @test occursin("KiB", s)
+    @test occursin("%", s)
+    @test occursin("▕", s)                          # the share bar
+
+    press!(m, 'M')
+    @test !m.tree.show_memory
+    @test !occursin("KiB", screen(draw(m, 120, 12)))
+end
+
+@testitem "f folds away what matched" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!,
+                     node_status
+
+    before = sample_run()
+    after = sample_run()
+    after.losses = [3.0, 2.0, 0.5]
+
+    root = root_node(Diff(before, after), "before")
+    expand_differences!(root, 8)
+    m = Explorer(; tree = ObjectTree(root), names = ("before", "after"))
+
+    full = length(rows(m.tree))
+    @test any(r -> node_status(r.node) === :same, rows(m.tree))
+
+    press!(m, 'f')
+    @test m.tree.hide_same
+    @test length(rows(m.tree)) < full
+    @test !any(r -> node_status(r.node) === :same, rows(m.tree))
+
+    press!(m, 'f')
+    @test length(rows(m.tree)) == full
+end
+
+@testitem "the comparison pane tallies what differs" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!
+
+    before = sample_run()
+    after = sample_run()
+    after.losses = [3.0, 2.0, 0.5, 0.1]
+
+    root = root_node(Diff(before, after), "before")
+    expand_differences!(root, 8)
+    m = Explorer(; tree = ObjectTree(root), names = ("before", "after"))
+
+    s = screen(draw(m))
+    @test occursin("~", s)     # changed
+    @test occursin("+", s)     # the added element
+end
+
+@testitem "modules and types open in the app" tags=[:unit] setup=[AppHarness] begin
+    m = explorer(Narcissus, "Narcissus")
+    press!(m, :right)
+    s = screen(draw(m))
+    @test occursin("narcissus", s)
+    @test occursin("module", screen(draw(m)))
+
+    t = explorer(Config, "Config")
+    press!(t, :right)
+    s2 = screen(draw(t))
+    @test occursin("lr", s2)
+    @test occursin("Float64", s2)
+    @test occursin("::type", s2)
 end

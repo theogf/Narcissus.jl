@@ -83,7 +83,7 @@ end
     @test occursin("2-element", text)   # from the show(::MIME"text/plain") dump
 end
 
-@testitem "mode is a property of the node and its subtree" tags=[:unit] setup=[Fixtures] begin
+@testitem "mode belongs to a node and its subtree" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: root_node, flatten, expand_recursive!, toggle_mode!, set_mode!,
                      Semantic, Fields, mode_name
 
@@ -131,4 +131,64 @@ end
 
     @test exploration_mode(:fields) isa Fields
     @test_throws ArgumentError exploration_mode(:nonsense)
+end
+
+@testitem "anomalies are found and cached" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: root_node, node_anomaly, anomaly, flatten, expand_recursive!
+
+    @test anomaly(NaN) === :nan
+    @test anomaly(Inf) === :inf
+    @test anomaly([1.0, NaN]) === :nan
+    @test anomaly(Int[]) === :empty
+    @test anomaly(missing) === :missing
+    @test anomaly(1.0) === nothing
+    @test anomaly([1.0, 2.0]) === nothing
+    @test anomaly(["a"]) === nothing        # not worth scanning
+    @test anomaly(nothing) === nothing      # too ordinary to flag
+
+    n = root_node([1.0, NaN], "v")
+    @test node_anomaly(n) === :nan
+    @test node_anomaly(n) === :nan          # cached, same answer
+    @test node_anomaly(root_node(1.0, "x")) === nothing
+end
+
+@testitem "a deep walk finds what is not loaded" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: root_node, find_node, reveal!, flatten, SEARCH_BUDGET
+
+    root = root_node(sample_branch(), "b")
+    @test length(flatten(root)) == 1                  # nothing loaded yet
+
+    found = find_node(root, n -> n.key == "label")
+    @test found !== nothing
+    @test found.path == "b.leaf.label"
+
+    # It was found but is not yet on screen; revealing opens its ancestors.
+    @test length(flatten(root)) == 1
+    reveal!(found)
+    @test found.path in [r.node.path for r in flatten(root)]
+
+    @test find_node(root, n -> n.key == "nonexistent") === nothing
+
+    # The budget is a hard stop, not a suggestion.
+    budget = Ref(3)
+    @test find_node(root, n -> n.key == "label"; budget) === nothing
+    @test budget[] < 0
+end
+
+@testitem "memory sizes are computed once" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: root_node, node_bytes, human_bytes, byte_size, load_children!
+
+    n = root_node(sample_branch(), "b")
+    total = node_bytes(n)
+    @test total > 0
+    @test node_bytes(n) == total          # cached
+
+    load_children!(n)
+    data = only(c for c in n.children if c.key == "data")
+    @test 0 < node_bytes(data) <= total
+
+    @test human_bytes(12) == "12 B"
+    @test human_bytes(4096) == "4.0 KiB"
+    @test occursin("MiB", human_bytes(1_500_000))
+    @test byte_size(nothing) >= 0
 end

@@ -41,6 +41,8 @@ mutable struct ObjNode
     limit::Int
     _preview::Union{Nothing,String}
     _status::Union{Nothing,Symbol}
+    _anomaly::Union{Nothing,Symbol}   # `nothing` = not computed; `:none` = clean
+    _bytes::Int                       # -1 = not computed
 end
 
 function ObjNode(key::AbstractString, value, path::AbstractString;
@@ -48,7 +50,7 @@ function ObjNode(key::AbstractString, value, path::AbstractString;
                  mode::ExplorationMode=Semantic(), limit::Int=DEFAULT_LIMIT)
     ObjNode(String(key), kind, value, String(path), parent, ObjNode[],
             false, false, expandable(mode, value), mode, index,
-            n_components(mode, value), 0, limit, nothing, nothing)
+            n_components(mode, value), 0, limit, nothing, nothing, nothing, -1)
 end
 
 "Root node for `value`, displayed and path-rooted as `name`."
@@ -153,6 +155,8 @@ function refresh_value!(n::ObjNode)
     n.value = kids[1].value
     n._preview = nothing
     n._status = nothing
+    n._anomaly = nothing
+    n._bytes = -1
     n.total = n_components(n.mode, n.value)
     n.expandable = expandable(n.mode, n.value)
     true
@@ -261,6 +265,30 @@ function node_status(n::ObjNode)
 end
 
 """
+    node_anomaly(node) -> Union{Nothing,Symbol}
+
+[`anomaly`](@ref) of a node's value, cached, with `:none` standing for "clean".
+Cached because arrays are scanned to answer it.
+"""
+function node_anomaly(n::ObjNode)
+    n._anomaly === nothing || return n._anomaly === :none ? nothing : n._anomaly
+    a = n.value isa Diff ? nothing : anomaly(n.value)
+    n._anomaly = something(a, :none)
+    a
+end
+
+"""
+    node_bytes(node) -> Int
+
+[`byte_size`](@ref) of a node's value, cached. Only ever asked for by the
+memory view, since it walks the whole retained object graph.
+"""
+function node_bytes(n::ObjNode)
+    n._bytes >= 0 && return n._bytes
+    n._bytes = n.value isa Diff ? byte_size(n.value.x) : byte_size(n.value)
+end
+
+"""
     expand_differences!(node, depth)
 
 Open the branches that differ and leave the identical ones folded, down to
@@ -293,22 +321,90 @@ struct Row
 end
 
 """
-    flatten(root) -> Vector{Row}
+    flatten(root; hide_same=false, kinds=:all) -> Vector{Row}
 
 The currently visible rows, in display order.
+
+Both filters drop *rows*, never components, so the elision arithmetic of a long
+container is untouched: a hidden subtree is simply never walked.
+
+- `hide_same` drops the branches a comparison found identical.
+- `kinds` keeps only one [`binding_kind`](@ref) beneath module nodes, which is
+  how "show me just the types this package defines" is answered. It applies
+  only under modules — elsewhere a listing of one kind is not a question anyone
+  is asking.
 """
-function flatten(root::ObjNode)
+function flatten(root::ObjNode; hide_same::Bool=false, kinds::Symbol=:all)
     rows = Row[]
-    _flatten!(rows, root, 0, true, Bool[])
+    _flatten!(rows, root, 0, true, Bool[], hide_same, kinds)
     rows
 end
 
-function _flatten!(rows, n::ObjNode, depth, is_last, parent_lasts)
+function _flatten!(rows, n::ObjNode, depth, is_last, parent_lasts, hide_same, kinds)
     push!(rows, Row(n, depth, is_last, copy(parent_lasts)))
     n.expanded || return rows
+
+    kids = n.children
+    hide_same && (kids = filter(c -> node_status(c) !== :same, kids))
+    kinds === :all || !(n.value isa Module) ||
+        (kids = filter(c -> binding_kind(c.value) === kinds, kids))
+
     lasts = vcat(parent_lasts, is_last)
-    for (i, c) in enumerate(n.children)
-        _flatten!(rows, c, depth + 1, i == length(n.children), lasts)
+    for (i, c) in enumerate(kids)
+        _flatten!(rows, c, depth + 1, i == length(kids), lasts, hide_same, kinds)
     end
     rows
+end
+
+"""
+    find_node(root, predicate; budget=SEARCH_BUDGET, maxdepth=32) -> Union{Nothing,ObjNode}
+
+Walk the tree in display order looking for a node `predicate` accepts, opening
+children as it goes.
+
+This is the escalation behind `/` and `a`: the visible rows are searched first
+because that is instant, and only when nothing matches does the explorer go
+looking in the parts of the object it has not read yet. The walk is capped at
+`budget` nodes and `maxdepth` levels, because the whole point of the lazy tree
+is to never be obliged to read all of a large object.
+"""
+function find_node(root::ObjNode, predicate; budget::Ref{Int}=Ref(SEARCH_BUDGET),
+                   maxdepth::Int=32, skip::Union{Nothing,ObjNode}=nothing)
+    (budget[] -= 1) < 0 && return nothing
+    maxdepth < 0 && return nothing
+    root !== skip && predicate(root) && return root
+    (root.expandable && root.kind !== :elided) || return nothing
+    load_children!(root)
+    for c in root.children
+        found = find_node(c, predicate; budget, maxdepth = maxdepth - 1, skip)
+        found === nothing || return found
+    end
+    nothing
+end
+
+"""
+    SEARCH_BUDGET
+
+How many nodes a deep search may visit before giving up.
+
+The walk materialises every node it touches and renders every leaf it tests, so
+this bounds both how long a search can block the UI and how much tree it can
+grow behind your back. Warm, a full budget costs on the order of 70ms; the
+first walk over a shape of object never seen before is slower, and that is
+Julia compiling the decomposition, not the search.
+"""
+const SEARCH_BUDGET = 20_000
+
+"""
+    reveal!(node)
+
+Expand every ancestor of `node` so that it becomes a visible row.
+"""
+function reveal!(n::ObjNode)
+    p = n.parent
+    while p !== nothing
+        p.expanded = true
+        p = p.parent
+    end
+    n
 end

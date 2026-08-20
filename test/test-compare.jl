@@ -27,7 +27,7 @@ end
     @test diff_status(Diff([1, 2], [1, 2])) === :same
 end
 
-@testitem "structural equality sees through mutable structs" tags=[:unit] setup=[DiffFixtures] begin
+@testitem "equality sees through mutable structs" tags=[:unit] setup=[DiffFixtures] begin
     r = Run2("a", Cfg(0.1, [:x]))
 
     # `isequal` says these differ; they plainly do not.
@@ -71,7 +71,7 @@ end
     @test diff_status(tail[3].value) === :added
 end
 
-@testitem "dictionaries pair by key, not by position" tags=[:unit] setup=[DiffFixtures] begin
+@testitem "dictionaries pair by key" tags=[:unit] setup=[DiffFixtures] begin
     kids = sides(Diff(Dict(:a => 1, :b => 2), Dict(:b => 2, :c => 3)))
     by_key = Dict(k.key => k.value for k in kids)
     @test sort(collect(keys(by_key))) == [":a", ":b", ":c"]
@@ -97,7 +97,7 @@ end
     @test node_status(root) === :type
 end
 
-@testitem "differing branches open, identical ones stay folded" tags=[:unit] setup=[DiffFixtures] begin
+@testitem "differing branches open, same ones fold" tags=[:unit] setup=[DiffFixtures] begin
     a = Run2("exp", Cfg(0.1, [:x, :y]))
     b = Run2("exp", Cfg(0.2, [:x, :y]))
 
@@ -128,7 +128,7 @@ end
     @test length(rows) < 12
 end
 
-@testitem "comparisons honour the field/semantic toggle" tags=[:unit] setup=[DiffFixtures] begin
+@testitem "comparisons honour the mode toggle" tags=[:unit] setup=[DiffFixtures] begin
     using Narcissus: toggle_mode!, has_semantic_view
 
     d = Diff([1.0, 2.0], [1.0, 3.0])

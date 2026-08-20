@@ -13,6 +13,8 @@ Built on [Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl).
 """
 module Narcissus
 
+using PrecompileTools: @compile_workload
+using AbstractTrees
 using Tachikoma
 
 # Pulls Tachikoma's callback generics into this module — `view`, `update!`,
@@ -21,17 +23,21 @@ using Tachikoma
 # would never call.
 @tachikoma_app
 
-export narcissus
+export narcissus, @narcissus
+export print_object, print_diff
 # The decomposition interface — overload these to teach Narcissus a new type.
 export components, component_count, has_semantic_view, is_leaf
 export Component, ExplorationMode, Semantic, Fields
 export Diff, Absent, diff_status
 
 include("components.jl")
+include("inspect.jl")
 include("compare.jl")
 include("nodes.jl")
 include("format.jl")
 include("tree_widget.jl")
 include("explorer.jl")
+include("print.jl")
+include("precompile.jl")
 
 end

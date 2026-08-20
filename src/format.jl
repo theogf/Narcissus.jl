@@ -72,6 +72,11 @@ function type_string(n::ObjNode)
         tx, ty = string(typeof(v.x)), string(typeof(v.y))
         return tx == ty ? tx : tx * " → " * ty
     end
+    # `typeof(String)` is `DataType`, which tells the reader nothing they want
+    # to know. Say "type" and let the value column carry the actual type.
+    v isa Type && return "type"
+    # `typeof(sin)` prints as `typeof(sin)`, which only repeats the value.
+    v isa Function && return "function"
     string(typeof(v))
 end
 
@@ -124,23 +129,38 @@ function preview_spans(n::ObjNode, selected::Bool=false)
 
     d = n.value
     status = node_status(n)
+    # The left side is one colour and the right the other, throughout; a value
+    # that exists on only one side simply wears that side's colour.
     status === :same && return [(pv, tstyle(:text_dim))]
-    status === :added && return [(pv, tstyle(:success))]
-    status === :removed && return [(pv, tstyle(:error))]
+    status === :added && return [(pv, tstyle(:warning))]
+    status === :removed && return [(pv, tstyle(:primary))]
     [(compact_show(d.x; width=28), tstyle(:primary)),
      (" → ", tstyle(:border, dim=true)),
      (compact_show(d.y; width=28), tstyle(:warning))]
 end
 
-"Row glyph and style for a comparison status; `:none` draws nothing."
+"""
+    status_marker(status) -> (Char, Style)
+
+Row glyph and colour for a comparison status; `:none` draws nothing.
+
+Green means the two sides match and red means they do not — one question, one
+colour, answered the same way everywhere the status appears. The glyph says
+*how* they fail to match, so `+` and `-` stay red rather than borrowing green
+for "added" and making green mean two different things.
+"""
 function status_marker(status::Symbol)
-    status === :same && return ('·', tstyle(:text_dim))
-    status === :changed && return ('~', tstyle(:accent, bold=true))
-    status === :added && return ('+', tstyle(:success, bold=true))
+    status === :same && return ('·', tstyle(:success, bold=true))
+    status === :changed && return ('~', tstyle(:error, bold=true))
+    status === :added && return ('+', tstyle(:error, bold=true))
     status === :removed && return ('-', tstyle(:error, bold=true))
-    status === :type && return ('!', tstyle(:warning, bold=true))
+    status === :type && return ('!', tstyle(:error, bold=true))
     (' ', tstyle(:text))
 end
+
+"Green when the two sides match, red when they do not."
+status_style(status::Symbol) =
+    status === :same ? tstyle(:success, bold=true) : tstyle(:error, bold=true)
 
 # ── Detail pane ──────────────────────────────────────────────────────
 
@@ -159,6 +179,13 @@ end
 "Human-readable description of what kind of thing a value is."
 function kind_string(@nospecialize(v))
     v isa Absent && return "absent on this side"
+    v isa Module && return "module"
+    if v isa Type
+        isabstracttype(v) && return "abstract type"
+        v isa UnionAll && return "parametric type"
+        v isa Union && return "type union"
+        return ismutabletype(v) ? "mutable struct type" : "struct type"
+    end
     v isa Undef && return "undefined field"
     v isa AccessError && return "inaccessible"
     T = typeof(v)
@@ -204,7 +231,29 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
 
     _row!(spans, "parts", string(n_components(n.mode, v)), tstyle(:text))
 
-    if v isa AbstractArray
+    if v isa Module
+        _row!(spans, "parent", string(parentmodule(v)), tstyle(:text))
+        _row!(spans, "public", string(length(module_names(v))), tstyle(:text))
+        _row!(spans, "all", string(length(module_names(v; all=true))), _dim())
+        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
+                          tstyle(:border, dim=true)))
+        push!(spans, Span("Semantic view lists what the module offers; the field "
+                          * "view lists everything it defines.\n", _dim()))
+        return spans
+    elseif v isa Type
+        _row!(spans, "super", string(supertype(v)), tstyle(:secondary))
+        _row!(spans, "fields", string(n_components(n.mode, v)), tstyle(:text))
+        _row!(spans, "abstract", string(isabstracttype(v)), _dim())
+        _row!(spans, "isbits", string(isbitstype(v)), _dim())
+        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
+                          tstyle(:border, dim=true)))
+        for i in 1:n_components(n.mode, v)
+            push!(spans, Span("  " * String(fieldname(v, i)), tstyle(:primary)))
+            push!(spans, Span("::" * string(fieldtype(v, i)) * "\n",
+                              tstyle(:secondary)))
+        end
+        return spans
+    elseif v isa AbstractArray
         _row!(spans, "size", string(size(v)), tstyle(:text))
         _row!(spans, "eltype", string(eltype(v)), tstyle(:text))
     elseif v isa AbstractDict
@@ -277,7 +326,11 @@ function diff_detail_spans(n::ObjNode, width::Int, height::Int, names)
     lname, rname = names === nothing ? ("left", "right") : names
 
     _row!(spans, "status", get(STATUS_TEXT, status, string(status)),
-          status === :same ? tstyle(:success) : tstyle(:warning))
+          status_style(status))
+    if status === :type
+        _row!(spans, "types", string(typeof(d.x)) * "  ≠  " * string(typeof(d.y)),
+              tstyle(:error))
+    end
     _row!(spans, lname, d.x isa Absent ? "—" : n.path, tstyle(:primary))
     _row!(spans, rname, d.y isa Absent ? "—" : rename_root(n.path, names),
           tstyle(:warning))
@@ -307,4 +360,36 @@ function _side!(spans, label::AbstractString, @nospecialize(v), style::Style,
     end
     _row!(spans, "type", string(typeof(v)), tstyle(:secondary))
     push!(spans, Span(plain_show(v; width, height) * "\n\n", tstyle(:text)))
+end
+
+# ── Memory view ──────────────────────────────────────────────────────
+
+"""
+    MEMORY_COLUMN_WIDTH
+
+Width of the memory column: `1023 KiB ▕████····▏ 100%`. Fixed, because the
+column is right-aligned to the pane and a variable width would stop the sizes
+and percentages lining up — which is the entire reason to look at them.
+"""
+const MEMORY_COLUMN_WIDTH = 9 + 1 + 10 + 5
+
+"""
+    memory_spans(node) -> Vector{Tuple{String,Style}}
+
+The memory column: retained size, a share bar, and the share as a percentage.
+
+The share is what makes it readable — an absolute size tells you a node is
+large, but the proportion tells you whether it is the reason its parent is.
+Rendered as a right-aligned block of [`MEMORY_COLUMN_WIDTH`](@ref) cells so
+that sibling rows can be compared down the column rather than read one by one.
+"""
+function memory_spans(n::ObjNode)
+    bytes = node_bytes(n)
+    parent_bytes = n.parent === nothing ? bytes : node_bytes(n.parent)
+    share = parent_bytes > 0 ? bytes / parent_bytes : 1.0
+
+    heavy = share > 0.5 ? tstyle(:warning, bold=true) : tstyle(:text)
+    [(lpad(human_bytes(bytes), 9), heavy),
+     (" " * share_bar(share), tstyle(:text_dim)),
+     (lpad(string(round(Int, 100share), "%"), 5), tstyle(:text_dim))]
 end
