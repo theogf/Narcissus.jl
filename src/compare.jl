@@ -149,7 +149,13 @@ end
 function _same_array(mode, a, b, budget::Ref{Int}, depth::Int)
     axes(a) == axes(b) || return false
     for i in eachindex(a)
-        _same(mode, a[i], b[i], budget, depth + 1) || return false
+        # Unassigned slots are a real difference when only one side has one,
+        # and reading either would throw — so ask before reaching in.
+        ea, eb = _tryget(() -> a[i]), _tryget(() -> b[i])
+        readable = !(ea isa AccessError)
+        readable == !(eb isa AccessError) || return false
+        readable || continue
+        _same(mode, ea, eb, budget, depth + 1) || return false
         budget[] < 0 && return false
     end
     true

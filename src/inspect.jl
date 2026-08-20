@@ -47,12 +47,31 @@ function anomaly(x::AbstractArray)
     isempty(x) && return :empty
     _scannable(eltype(x)) || return nothing
     length(x) > SCAN_BUDGET && return nothing
+
     found = nothing
-    for v in x
-        a = anomaly(v)
-        a === nothing && continue
-        a === :nan && return :nan       # the loudest wins; stop looking
-        found = something(found, a)
+    try
+        if isbitstype(eltype(x))
+            # Every slot of a bits array holds a value; iterate it directly.
+            for v in x
+                a = anomaly(v)
+                a === nothing && continue
+                a === :nan && return :nan      # the loudest wins; stop looking
+                found = something(found, a)
+            end
+        else
+            # A `Memory` or `Vector{Any}` can have unassigned slots — a `Dict`'s
+            # internal storage is full of them — and reading one throws. They
+            # are the container's business, not an anomaly in the value.
+            for i in eachindex(x)
+                isassigned(x, i) || continue
+                a = anomaly(x[i])
+                a === nothing && continue
+                a === :nan && return :nan
+                found = something(found, a)
+            end
+        end
+    catch
+        return found
     end
     found
 end
@@ -174,3 +193,49 @@ function doc_binding(x::Union{Function,Type,Module})
         nothing
     end
 end
+
+# ── Clipboard ────────────────────────────────────────────────────────
+
+"""
+    CLIPBOARD_COMMANDS
+
+Commands tried, in order, to put text on the system clipboard.
+
+Tachikoma's own `clipboard_copy!` knows only `xclip`, which is not installed on
+a great many Linux desktops — Wayland sessions use `wl-copy` — and it swallows
+the failure, so the app cheerfully reports a copy that never happened. Trying
+the alternatives and reporting the truth is worth the twenty lines.
+"""
+const CLIPBOARD_COMMANDS = if Sys.isapple()
+    [`pbcopy`]
+elseif Sys.iswindows()
+    [`clip`]
+else
+    [`wl-copy`, `xclip -selection clipboard`, `xsel --clipboard --input`]
+end
+
+"""
+    copy_to_clipboard(text) -> Bool
+
+Put `text` on the system clipboard, returning whether anything actually took
+it. `false` means every available tool was missing or refused — the caller is
+expected to say so rather than claim success.
+"""
+function copy_to_clipboard(text::AbstractString)
+    for command in CLIPBOARD_COMMANDS
+        Sys.which(first(command)) === nothing && continue
+        try
+            open(pipeline(command; stderr=devnull), "w") do io
+                write(io, text)
+            end
+            return true
+        catch
+            continue
+        end
+    end
+    false
+end
+
+"Name the tools that could have taken the text, for a useful failure message."
+clipboard_hint() = "no clipboard tool found (tried " *
+                   join((first(c) for c in CLIPBOARD_COMMANDS), ", ") * ")"

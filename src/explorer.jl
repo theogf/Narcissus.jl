@@ -163,17 +163,12 @@ function update!(m::Explorer, e::KeyEvent)
             m.revision += 1               # force the detail pane to rebuild
             notify!(m, "reloaded")
         end
-    elseif e.key == :char && e.char == 'y'
+    elseif e.key == :char && (e.char == 'y' || e.char == 'Y')
         node = current_node(m.tree)
         if node !== nothing
-            clipboard_copy!(node.path)
-            notify!(m, "copied $(node.path)")
-        end
-    elseif e.key == :char && e.char == 'Y'
-        node = current_node(m.tree)
-        if node !== nothing
-            clipboard_copy!(plain_show(node.value; width = 100))
-            notify!(m, "copied value of $(node.path)")
+            what = e.char == 'y' ? node.path : plain_show(node.value; width=100)
+            label = e.char == 'y' ? node.path : "value of $(node.path)"
+            notify!(m, copy_to_clipboard(what) ? "copied $label" : clipboard_hint())
         end
     elseif m.focus === :detail
         scroll_detail!(m, e)

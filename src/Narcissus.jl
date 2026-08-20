@@ -25,10 +25,15 @@ using Tachikoma
 
 export narcissus, @narcissus
 export print_object, print_diff
-# The decomposition interface — overload these to teach Narcissus a new type.
-export components, component_count, has_semantic_view, is_leaf
 export Component, ExplorationMode, Semantic, Fields
 export Diff, Absent, diff_status
+
+# `components`, `component_count`, `has_semantic_view` and `is_leaf` are
+# deliberately NOT exported: they are the names every tree, graph and container
+# package reaches for, and colliding with one of those in the REPL is a worse
+# outcome than typing the module name. Extend them qualified:
+#
+#     Narcissus.components(::Narcissus.Semantic, x::MyType) = ...
 
 include("components.jl")
 include("inspect.jl")

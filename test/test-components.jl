@@ -204,10 +204,14 @@ end
     public = module_names(Narcissus)
     everything = module_names(Narcissus; all=true)
     @test :narcissus in public
-    @test :components in public
+    @test :Component in public
     @test length(everything) > length(public)
     @test :DEFAULT_LIMIT in everything                 # an internal
     @test :DEFAULT_LIMIT ∉ public
+    # Deliberately not exported: too generic a name to put in anyone's Main.
+    @test :components ∉ public
+    @test :components in everything
+    @test :is_leaf ∉ public
     @test :Narcissus ∉ public                          # never itself
     @test all(n -> !startswith(String(n), "#"), everything)
 

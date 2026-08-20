@@ -176,6 +176,13 @@ function _row!(spans, label::AbstractString, value::AbstractString,
     spans
 end
 
+"`supertype`, or an empty string for the types that do not have one."
+_supertype_string(@nospecialize(T::Type)) = try
+    string(supertype(T))
+catch
+    ""
+end
+
 "Human-readable description of what kind of thing a value is."
 function kind_string(@nospecialize(v))
     v isa Absent && return "absent on this side"
@@ -242,14 +249,19 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
         _docs!(spans, v, width; separator=false)
         return spans
     elseif v isa Type
-        _row!(spans, "super", string(supertype(v)), tstyle(:secondary))
+        # `supertype` is a `DataType` question: a `UnionAll` or a `Union` has
+        # no single answer and throws rather than saying so.
+        _row!(spans, "super", _supertype_string(v), tstyle(:secondary))
         _row!(spans, "fields", string(n_components(n.mode, v)), tstyle(:text))
         _row!(spans, "abstract", string(isabstracttype(v)), _dim())
         _row!(spans, "isbits", string(isbitstype(v)), _dim())
         push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
                           tstyle(:border, dim=true)))
         for i in 1:n_components(n.mode, v)
-            push!(spans, Span("  " * String(fieldname(v, i)), tstyle(:primary)))
+            # A tuple type's field "names" are integers, not symbols.
+            name = fieldname(v, i)
+            label = name isa Integer ? "[$name]" : String(name)
+            push!(spans, Span("  " * label, tstyle(:primary)))
             push!(spans, Span("::" * string(fieldtype(v, i)) * "\n",
                               tstyle(:secondary)))
         end
