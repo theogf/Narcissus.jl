@@ -404,6 +404,9 @@ that sibling rows can be compared down the column rather than read one by one.
 """
 function memory_spans(n::ObjNode)
     bytes = node_bytes(n)
+    # Modules and types decline to be measured; say so rather than claim "0 B".
+    bytes == 0 && (n.value isa Module || n.value isa Type) &&
+        return [(lpad("—", 9), tstyle(:text_dim))]
     parent_bytes = n.parent === nothing ? bytes : node_bytes(n.parent)
     share = parent_bytes > 0 ? bytes / parent_bytes : 1.0
 

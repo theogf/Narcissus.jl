@@ -109,6 +109,13 @@ catch
     0
 end
 
+# `summarysize` of a module walks everything that module can reach, which for
+# `Base` is the entire runtime and takes minutes. A module and a type are not
+# data whose footprint anyone is trying to account for, so they report nothing
+# rather than freezing the app to produce a number nobody wanted.
+byte_size(::Module) = 0
+byte_size(@nospecialize(::Type)) = 0
+
 """
     human_bytes(n) -> String
 
