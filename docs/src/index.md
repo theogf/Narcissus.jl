@@ -8,7 +8,13 @@ A terminal UI for staring at your Julia objects. Point it at a value and walk
 its fields, elements and entries one level at a time — or point it at two and
 see what changed.
 
-Built on [Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl).
+Built on [Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl), with the detail
+pane owing a debt to [About.jl](https://github.com/tecosaur/About.jl) and the
+comparison mode to [ObjectDiff.jl](https://github.com/theogf/ObjectDiff.jl).
+
+> **This project was vibe coded in its entirety** — every line written by an LLM
+> from conversational prompts.
+
 
 ```julia
 using Narcissus
@@ -111,8 +117,12 @@ for how all of this is just [`components`](@ref) methods.
 `IO` — for a log, a CI run, or a notebook. Both take a `maxdepth`, which is
 what keeps them from reading all of a large object.
 
+`print_diff` and [`Diff`](@ref) are not exported — tree and diff packages
+commonly export names of their own that would collide — so reach for them as
+`Narcissus.print_diff` and `Narcissus.Diff`.
+
 ```julia
-julia> print_diff(before, after; names=("before", "after"))
+julia> Narcissus.print_diff(before, after; names=("before", "after"))
 ```
 
 ## Comparing two objects
@@ -243,3 +253,14 @@ Every row knows how to name itself as Julia code:
 - [The decomposition interface](@ref interface) — teaching Narcissus your own
   types, and the two modes in detail.
 - [Reference](@ref reference) — the full API.
+
+## Acknowledgements
+
+- **[Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl)** — the terminal
+  UI framework everything here is built on.
+- **[About.jl](https://github.com/tecosaur/About.jl)** — `about(x)` prints a
+  rich description of a value: what it is, what it costs, how it is laid out.
+  Narcissus' detail pane is that idea made navigable, one row at a time.
+- **[ObjectDiff.jl](https://github.com/theogf/ObjectDiff.jl)** — the recursive
+  comparison that `narcissus(x, y)` grew out of, including its insight that
+  `==` is the wrong question to ask about two mutable structs.

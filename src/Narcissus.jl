@@ -24,16 +24,23 @@ using Tachikoma
 @tachikoma_app
 
 export narcissus, @narcissus
-export print_object, print_diff
+export print_object
 export Component, ExplorationMode, Semantic, Fields
-export Diff, Absent, diff_status
+export Absent, diff_status
 
-# `components`, `component_count`, `has_semantic_view` and `is_leaf` are
-# deliberately NOT exported: they are the names every tree, graph and container
-# package reaches for, and colliding with one of those in the REPL is a worse
-# outcome than typing the module name. Extend them qualified:
+# Deliberately NOT exported, and reached as `Narcissus.x` instead:
 #
-#     Narcissus.components(::Narcissus.Semantic, x::MyType) = ...
+#   components, component_count, has_semantic_view, is_leaf
+#       The names every tree, graph and container package reaches for.
+#       Colliding with one of those in the REPL is a worse outcome than
+#       typing the module name. Extend them qualified:
+#
+#           Narcissus.components(::Narcissus.Semantic, x::MyType) = ...
+#
+#   Diff, print_diff
+#       Same problem: tree and diff packages commonly export both, and a
+#       session loading one alongside this would find the bare names
+#       ambiguous.
 
 include("components.jl")
 include("inspect.jl")

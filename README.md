@@ -11,7 +11,13 @@ A terminal UI for staring at your Julia objects. Point it at a value and walk
 its fields, elements and entries one level at a time — or point it at two and
 see what changed.
 
-Built on [Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl).
+Built on [Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl), with the detail
+pane owing a debt to [About.jl](https://github.com/tecosaur/About.jl) and the
+comparison mode to [ObjectDiff.jl](https://github.com/theogf/ObjectDiff.jl).
+
+> **This project was vibe coded in its entirety** — every line written by an LLM
+> from conversational prompts.
+
 
 ```julia
 using Narcissus
@@ -257,13 +263,18 @@ app:
 
 ```julia
 julia> print_object(model; maxdepth=2)
-julia> print_diff(before, after; names=("before", "after"))
+julia> Narcissus.print_diff(before, after; names=("before", "after"))
 ```
 
 `print_diff` leaves out the branches that matched — pass `all=true` to keep
 them. Both take a `maxdepth`, which is what keeps them honest: the tree loads
 children as it is walked, so an unbounded print would read all of a large
 object.
+
+`print_diff` is qualified above because it is not exported: EndoTree.jl and
+other tree packages export a `print_diff` of their own, and so a bare one would
+be ambiguous in any session that loads both. The same goes for `Diff` — reach
+for them as `Narcissus.print_diff` and `Narcissus.Diff`.
 
 ## Teaching Narcissus about your types
 
@@ -361,6 +372,17 @@ Every row knows how to name itself as Julia code:
 | dictionary     | `d[:key]`                         |
 | set            | `collect(s)[3]`                   |
 | struct storage | `d.slots`, `v.ref`                |
+
+## Acknowledgements
+
+- **[Tachikoma.jl](https://github.com/kahliburke/Tachikoma.jl)** — the terminal
+  UI framework everything here is built on.
+- **[About.jl](https://github.com/tecosaur/About.jl)** — `about(x)` prints a
+  rich description of a value: what it is, what it costs, how it is laid out.
+  Narcissus' detail pane is that idea made navigable, one row at a time.
+- **[ObjectDiff.jl](https://github.com/theogf/ObjectDiff.jl)** — the recursive
+  comparison that `narcissus(x, y)` grew out of, including its insight that
+  `==` is the wrong question to ask about two mutable structs.
 
 ## Documentation
 
