@@ -56,6 +56,10 @@ Base.@kwdef mutable struct Explorer <: Model
     notice::String = ""
     notice_ttl::Int = 0
     names::Union{Nothing,Tuple{String,String}} = nothing
+    work::TaskQueue = TaskQueue()
+    # Keyed by node *and* kind: a node can want both its size and its anomaly,
+    # and tracking only the node would silently drop the second request.
+    in_flight::Set{Tuple{ObjNode,Symbol}} = Set{Tuple{ObjNode,Symbol}}()
     # Draggable split between the two panes. A comparison wants a wide tree
     # (two values per row); exploring one object wants a wide detail pane.
     split::ResizableLayout = ResizableLayout(Horizontal,
@@ -67,6 +71,71 @@ end
 comparing(m::Explorer) = comparing(m.tree)
 
 should_quit(m::Explorer) = m.quit
+
+# Handing the queue to the app loop is what makes it drain finished work each
+# frame and deliver it back here as a `TaskEvent`.
+task_queue(m::Explorer) = m.work
+
+"How many measurements may be in flight at once."
+const MAX_IN_FLIGHT = 4
+
+"""
+    dispatch_work!(m)
+
+Hand whatever the last frame asked for to background tasks.
+
+Scanning an array for `NaN`s or walking an object to size it takes time
+proportional to the data, and a frame must take time proportional to the
+screen. The renderer records what it wants (`Narcissus.request!`) and this
+spawns it, capped at [`MAX_IN_FLIGHT`](@ref) so that opening a wide row does
+not start a hundred walks at once. Results arrive as `TaskEvent`s.
+
+`Threads.@spawn` does the work, so it genuinely overlaps only when Julia was
+started with more than one thread; on a single thread it still moves the cost
+out from between the layout and the paint.
+"""
+function dispatch_work!(m::Explorer)
+    isempty(m.tree.pending) && return nothing
+    for request in m.tree.pending
+        length(m.in_flight) >= MAX_IN_FLIGHT && break
+        request in m.in_flight && continue
+        push!(m.in_flight, request)
+        node, kind = request
+        spawn_task!(m.work, :measure) do
+            (node, kind, measure(kind, node))
+        end
+    end
+    empty!(m.tree.pending)
+    nothing
+end
+
+"Compute one requested value. Runs off the main task, and touches no state."
+function measure(kind::Symbol, node::ObjNode)
+    kind === :bytes && return bounded_size(node_measurand(node))
+    kind === :anomaly && return node.value isa Diff ? nothing : anomaly(node.value)
+    nothing
+end
+
+"""
+    update!(m::Explorer, e::TaskEvent)
+
+Take delivery of a background measurement. Writing the result here, on the main
+task, is what keeps it out of a data race with the walk that produced it.
+"""
+function update!(m::Explorer, e::TaskEvent)
+    e.value isa Tuple{ObjNode,Symbol,Any} || return nothing
+    node, kind, result = e.value
+    delete!(m.in_flight, (node, kind))
+    if kind === :bytes && result isa Tuple{Int,Bool}
+        set_bytes!(node, result)
+    elseif kind === :anomaly
+        set_anomaly!(node, result isa Symbol ? result : nothing)
+        # An anomaly can bring the flag column into existence.
+        invalidate!(m.tree)
+    end
+    m.revision += 1
+    nothing
+end
 
 "The value currently under the cursor — what `narcissus` hands back on exit."
 function selected_value(m::Explorer)
@@ -337,6 +406,7 @@ function view(m::Explorer, f::Frame)
     render(status_bar(m, bar.width), bar, f.buffer)
     m.show_help && render_help(f, a)
 
+    dispatch_work!(m)
     m.notice_ttl > 0 && (m.notice_ttl -= 1)
     nothing
 end

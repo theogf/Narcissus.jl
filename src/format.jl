@@ -402,16 +402,29 @@ large, but the proportion tells you whether it is the reason its parent is.
 Rendered as a right-aligned block of [`MEMORY_COLUMN_WIDTH`](@ref) cells so
 that sibling rows can be compared down the column rather than read one by one.
 """
-function memory_spans(n::ObjNode)
+function memory_spans(n::ObjNode, tree=nothing)
+    # Runtime machinery declines to be measured; say so rather than claim "0 B".
+    skip_for_size(node_measurand(n)) && return [(lpad("—", 9), tstyle(:text_dim))]
+
+    # Measuring walks the object, so the renderer asks for it and draws a
+    # placeholder until the answer comes back.
+    parent = n.parent
+    for node in (n, parent)
+        node === nothing && continue
+        bytes_state(node) < 0 && tree !== nothing && request!(tree, node, :bytes)
+    end
+    bytes_state(n) < 0 && return [(lpad("…", 9), tstyle(:text_dim))]
+
     bytes = node_bytes(n)
-    # Modules and types decline to be measured; say so rather than claim "0 B".
-    bytes == 0 && (n.value isa Module || n.value isa Type) &&
-        return [(lpad("—", 9), tstyle(:text_dim))]
-    parent_bytes = n.parent === nothing ? bytes : node_bytes(n.parent)
+    parent_bytes = parent === nothing || bytes_state(parent) < 0 ? bytes :
+                   node_bytes(parent)
     share = parent_bytes > 0 ? bytes / parent_bytes : 1.0
 
     heavy = share > 0.5 ? tstyle(:warning, bold=true) : tstyle(:text)
-    [(lpad(human_bytes(bytes), 9), heavy),
+    # A capped measurement is a lower bound, and says so rather than rounding
+    # a number it never finished computing.
+    shown = n._bytes_capped ? ">" * human_bytes(bytes) : human_bytes(bytes)
+    [(lpad(shown, 9), heavy),
      (" " * share_bar(share), tstyle(:text_dim)),
      (lpad(string(round(Int, 100share), "%"), 5), tstyle(:text_dim))]
 end

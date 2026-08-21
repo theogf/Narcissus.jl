@@ -127,9 +127,19 @@ its parent, and a bar.
 ```
 
 The share is what makes it readable: an absolute size tells you a node is
-large, the proportion tells you whether it is the *reason* its parent is. Sizes
-are computed only when you ask and cached per node, because each one walks the
-object.
+large, the proportion tells you whether it is the *reason* its parent is.
+
+Sizes appear as `…` and fill in a moment later: measuring walks the object, and
+a frame has to take time proportional to the screen rather than to your data.
+The work happens on background tasks (start Julia with `-t auto` and it
+genuinely overlaps), capped so that opening a wide row does not start a hundred
+walks at once, and cached per node once known. The same goes for the `NaN` and
+`Inf` flags, which scan arrays to answer.
+
+The walk is also bounded: it will not follow modules, types or methods — a
+single `Method` reaches most of the runtime, and `Base.summarysize` of one is
+111 MB — and it stops after a fixed number of objects, reporting `>1.2 MiB` to
+say the number is a lower bound rather than pretending to be exact.
 
 ## Comparing
 
@@ -271,10 +281,10 @@ them. Both take a `maxdepth`, which is what keeps them honest: the tree loads
 children as it is walked, so an unbounded print would read all of a large
 object.
 
-`print_diff` is qualified above because it is not exported: EndoTree.jl and
-other tree packages export a `print_diff` of their own, and so a bare one would
-be ambiguous in any session that loads both. The same goes for `Diff` — reach
-for them as `Narcissus.print_diff` and `Narcissus.Diff`.
+`print_diff` is qualified above because it is not exported: tree and diff
+packages commonly export a `print_diff` of their own, and a bare one would be
+ambiguous in any session that loads both. The same goes for `Diff` — reach for
+them as `Narcissus.print_diff` and `Narcissus.Diff`.
 
 ## Teaching Narcissus about your types
 

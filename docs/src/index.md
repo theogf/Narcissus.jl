@@ -97,8 +97,14 @@ bar.
 ```
 
 An absolute size tells you a node is large; the share tells you whether it is
-the *reason* its parent is. Computed on request and cached, since each answer
-walks the object.
+the *reason* its parent is.
+
+Sizes appear as `…` and fill in a moment later. Measuring walks the object, so
+it happens on a background task rather than in the frame — see
+[`bounded_size`](@ref), which also refuses to follow modules, types and methods
+(`Base.summarysize` of a single `Method` is 111 MB) and stops after a fixed
+number of objects, reporting `>1.2 MiB` when the answer is a lower bound. The
+`NaN` and `Inf` flags are computed the same way, for the same reason.
 
 ## Types and modules
 

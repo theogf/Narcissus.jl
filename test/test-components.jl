@@ -134,9 +134,13 @@ end
     @test all(k -> k.kind === :field, d)
     @test d[1].template == "{}.slots"
 
+    # Whatever Julia stores an Array as — `ref`/`size` from 1.11, nothing at
+    # all before that — the field view is exactly that and nothing else.
     v = fields([1.0, 2.0])
-    @test [k.key for k in v] == ["ref", "size"]
-    @test v[2].value == (2,)
+    @test [k.key for k in v] == [String(n) for n in fieldnames(Vector{Float64})]
+    if :size in fieldnames(Vector{Float64})
+        @test only(k for k in v if k.key == "size").value == (2,)
+    end
 
     # A plain struct looks the same in both modes.
     @test [k.key for k in fields(sample_branch())] ==

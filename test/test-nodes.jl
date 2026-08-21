@@ -127,7 +127,9 @@ end
 
     root = root_node([1.0, 2.0], "v"; mode=Fields())
     expand_recursive!(root, 0)
-    @test [r.node.key for r in flatten(root)] == ["v", "ref", "size"]
+    # Julia's own answer, so this holds whether or not Array exposes fields.
+    @test [r.node.key for r in flatten(root)] ==
+          ["v"; [String(n) for n in fieldnames(Vector{Float64})]]
 
     @test exploration_mode(:fields) isa Fields
     @test_throws ArgumentError exploration_mode(:nonsense)
@@ -191,4 +193,37 @@ end
     @test human_bytes(4096) == "4.0 KiB"
     @test occursin("MiB", human_bytes(1_500_000))
     @test byte_size(nothing) >= 0
+end
+
+@testitem "size measurement is bounded and refuses machinery" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: bounded_size, byte_size, skip_for_size, SIZE_BUDGET
+
+    # `Base.summarysize` of a single Method is ~111 MB: it reaches the module,
+    # the specializations, and from there most of the runtime. Measuring a
+    # method list would do that once per row.
+    for machinery in (Base, Vector{Float64}, first(methods(sin)), methods(+))
+        bytes, capped = bounded_size(machinery)
+        @test bytes < 1024
+        @test !capped
+    end
+    @test skip_for_size(Base)
+    @test skip_for_size(Int)
+    @test skip_for_size(first(methods(sin)))
+    @test !skip_for_size([1, 2, 3])
+
+    # Ordinary data is measured, and close to what summarysize would say.
+    data = rand(1000)
+    @test 0.9 < byte_size(data) / Base.summarysize(data) < 1.1
+    @test byte_size("hello") == Base.summarysize("hello")
+
+    # Shared children are counted once, and a cycle terminates.
+    shared = rand(500)
+    @test byte_size([shared, shared]) < 1.5 * byte_size([shared])
+    loop = Any[]
+    push!(loop, loop)
+    @test byte_size(loop) > 0
+
+    # The budget is a hard stop, and the result says it is a lower bound.
+    _, capped = bounded_size([rand(3) for _ in 1:50_000]; budget=500)
+    @test capped
 end

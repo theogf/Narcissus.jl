@@ -43,6 +43,7 @@ mutable struct ObjNode
     _status::Union{Nothing,Symbol}
     _anomaly::Union{Nothing,Symbol}   # `nothing` = not computed; `:none` = clean
     _bytes::Int                       # -1 = not computed
+    _bytes_capped::Bool               # measurement hit the budget
 end
 
 function ObjNode(key::AbstractString, value, path::AbstractString;
@@ -50,7 +51,8 @@ function ObjNode(key::AbstractString, value, path::AbstractString;
                  mode::ExplorationMode=Semantic(), limit::Int=DEFAULT_LIMIT)
     ObjNode(String(key), kind, value, String(path), parent, ObjNode[],
             false, false, expandable(mode, value), mode, index,
-            n_components(mode, value), 0, limit, nothing, nothing, nothing, -1)
+            n_components(mode, value), 0, limit, nothing, nothing, nothing,
+            -1, false)
 end
 
 "Root node for `value`, displayed and path-rooted as `name`."
@@ -157,6 +159,7 @@ function refresh_value!(n::ObjNode)
     n._status = nothing
     n._anomaly = nothing
     n._bytes = -1
+    n._bytes_capped = false
     n.total = n_components(n.mode, n.value)
     n.expandable = expandable(n.mode, n.value)
     true
@@ -267,8 +270,9 @@ end
 """
     node_anomaly(node) -> Union{Nothing,Symbol}
 
-[`anomaly`](@ref) of a node's value, cached, with `:none` standing for "clean".
-Cached because arrays are scanned to answer it.
+[`anomaly`](@ref) of a node's value, cached, computing it if it has not been
+computed yet. Arrays are scanned to answer this, which is why the answer is
+kept — and why the renderer asks [`anomaly_state`](@ref) instead.
 """
 function node_anomaly(n::ObjNode)
     n._anomaly === nothing || return n._anomaly === :none ? nothing : n._anomaly
@@ -278,14 +282,43 @@ function node_anomaly(n::ObjNode)
 end
 
 """
+    anomaly_state(node) -> Symbol
+
+`:pending` if nobody has looked yet, `:none` if the value is fine, otherwise
+the [`anomaly`](@ref).
+
+The renderer uses this rather than [`node_anomaly`](@ref) so that drawing a
+frame never scans a million-element array: it draws what is known and asks for
+the rest to be worked out off the main task.
+"""
+anomaly_state(n::ObjNode) = n._anomaly === nothing ? :pending : n._anomaly
+
+"Record an anomaly computed elsewhere."
+set_anomaly!(n::ObjNode, a::Union{Nothing,Symbol}) = (n._anomaly = something(a, :none))
+
+"""
     node_bytes(node) -> Int
 
-[`byte_size`](@ref) of a node's value, cached. Only ever asked for by the
-memory view, since it walks the whole retained object graph.
+[`bounded_size`](@ref) of a node's value, cached, computing it if needed.
+`node._bytes_capped` records whether the walk ran out of budget, in which case
+the number is a lower bound.
 """
 function node_bytes(n::ObjNode)
     n._bytes >= 0 && return n._bytes
-    n._bytes = n.value isa Diff ? byte_size(n.value.x) : byte_size(n.value)
+    n._bytes, n._bytes_capped = bounded_size(node_measurand(n))
+    n._bytes
+end
+
+"What a node's size is a size *of* — the left side, for a comparison."
+node_measurand(n::ObjNode) = n.value isa Diff ? n.value.x : n.value
+
+"`-1` while nobody has measured this node yet."
+bytes_state(n::ObjNode) = n._bytes
+
+"Record a size computed elsewhere."
+function set_bytes!(n::ObjNode, (bytes, capped)::Tuple{Int,Bool})
+    n._bytes = bytes
+    n._bytes_capped = capped
 end
 
 """

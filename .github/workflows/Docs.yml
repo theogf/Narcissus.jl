@@ -28,6 +28,13 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    # Documenter pushes the built site to gh-pages, which the default
+    # read-only GITHUB_TOKEN cannot do — the deploy fails with a 403 and
+    # "the gh-pages branch does not exist yet".
+    permissions:
+      contents: write
+      pull-requests: read
+      statuses: write
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3

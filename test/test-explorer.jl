@@ -18,6 +18,22 @@
 
     press!(m, k) = (update!(m, KeyEvent(k)); m)
 
+    """
+    Draw until the model's background measurements have all landed, the way the
+    app loop would over a few frames.
+    """
+    function settle!(m, width=90, height=20; frames=200)
+        for _ in 1:frames
+            # A draw both asks for work and dispatches it, capped — so the
+            # signal that everything has landed is a draw that asks for nothing.
+            draw(m, width, height)
+            isempty(m.in_flight) && return m
+            sleep(0.005)
+            drain_tasks!(e -> update!(m, e), m.work)
+        end
+        m
+    end
+
     struct Config
         lr::Float64
         tags::Vector{Symbol}
@@ -207,11 +223,12 @@ end
 end
 
 @testitem "field-mode paths stay pasteable" tags=[:unit] setup=[AppHarness] begin
-    m = explorer([1.0, 2.0], "v")
+    # A Dict rather than a Vector: Array exposes no fields before Julia 1.11.
+    m = explorer(Dict(:a => 1), "d")
     press!(m, 'm')
     press!(m, :right)
     press!(m, :down)
-    @test current_node(m.tree).path == "v.ref"
+    @test current_node(m.tree).path == "d.slots"
 end
 
 @testitem "comparison marks and navigates diffs" tags=[:unit] setup=[AppHarness] begin
@@ -324,6 +341,11 @@ end
     press!(m, 'M')
     @test m.tree.show_memory
     @test occursin("retained size", m.notice)
+
+    # Measuring happens off the main task, so the first frame shows placeholders.
+    @test occursin("…", screen(draw(m, 120, 12)))
+
+    settle!(m, 120, 12)
     s = screen(draw(m, 120, 12))
     @test occursin("KiB", s)
     @test occursin("%", s)
@@ -436,6 +458,7 @@ end
     m = explorer((small=[1, 2], big=rand(20_000)), "s")
     press!(m, :right)
     press!(m, 'M')
+    settle!(m, 100, 8)
 
     tb = draw(m, 100, 8)
     # Character positions, not byte offsets — the box-drawing characters around
@@ -443,4 +466,45 @@ end
     columns = [findlast(==('%'), collect(row_text(tb, y))) for y in 2:4]
     @test all(!isnothing, columns)
     @test length(unique(columns)) == 1             # every % in the same column
+end
+
+@testitem "slow measurements happen off the main task" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: bytes_state, anomaly_state, MAX_IN_FLIGHT
+
+    m = explorer((big=rand(200_000), also=rand(200_000), tag="x"), "s")
+    press!(m, :right)
+    press!(m, 'M')
+
+    # The first frame draws placeholders and asks for the work; it does not do it.
+    draw(m, 100, 10)
+    @test all(r -> bytes_state(r.node) < 0, rows(m.tree))
+    @test occursin("…", screen(draw(m, 100, 10)))
+    @test !isempty(m.in_flight)
+    @test length(m.in_flight) <= MAX_IN_FLIGHT      # capped, not a stampede
+
+    settle!(m, 100, 10)
+    @test isempty(m.in_flight)
+    @test all(r -> bytes_state(r.node) >= 0, rows(m.tree))
+    # Every tree row now carries a real measurement rather than a placeholder.
+    tb = draw(m, 100, 10)
+    @test all(y -> occursin('%', row_text(tb, y)), 2:5)
+    @test occursin("MiB", screen(tb))
+end
+
+@testitem "anomaly flags arrive without blocking the frame" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: anomaly_state
+
+    losses = rand(200_000)
+    losses[100_000] = NaN
+    m = explorer((losses=losses, fine=rand(200_000)), "s")
+    press!(m, :right)
+
+    draw(m, 90, 10)
+    @test any(r -> anomaly_state(r.node) === :pending, rows(m.tree))
+    # Nothing is flagged yet, so no column is reserved and nothing has shifted.
+    @test !occursin("!", screen(draw(m, 90, 10)))
+
+    settle!(m, 90, 10)
+    @test anomaly_state(rows(m.tree)[2].node) === :nan
+    @test occursin("!", screen(draw(m, 90, 10)))
 end

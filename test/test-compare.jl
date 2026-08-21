@@ -131,16 +131,20 @@ end
 @testitem "comparisons honour the mode toggle" tags=[:unit] setup=[DiffFixtures] begin
     using Narcissus: toggle_mode!, has_semantic_view
 
-    d = Diff([1.0, 2.0], [1.0, 3.0])
+    # A Dict, not a Vector: an Array exposes no fields before Julia 1.11, and
+    # this is a test about the two modes rather than about Array's layout.
+    stored = [String(n) for n in fieldnames(Dict{Symbol,Int})]
+
+    d = Diff(Dict(:a => 1), Dict(:a => 2))
     @test has_semantic_view(d)
-    @test [k.key for k in sides(d, Semantic())] == ["[1]", "[2]"]
-    @test [k.key for k in sides(d, Fields())] == ["ref", "size"]
+    @test [k.key for k in sides(d, Semantic())] == [":a"]
+    @test [k.key for k in sides(d, Fields())] == stored
 
     root = root_node(d, "v")
     @test toggle_mode!(root)
     expand_recursive!(root, 0)
-    @test [r.node.key for r in flatten(root)] == ["v", "ref", "size"]
-    @test flatten(root)[3].node.path == "v.size"
+    @test [r.node.key for r in flatten(root)] == ["v"; stored]
+    @test flatten(root)[2].node.path == "v.slots"
 end
 
 @testitem "diff rows show both sides" tags=[:unit] setup=[DiffFixtures] begin

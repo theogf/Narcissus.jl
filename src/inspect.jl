@@ -95,26 +95,97 @@ end
 
 # ── Memory ───────────────────────────────────────────────────────────
 
-"""
-    byte_size(x) -> Int
+"Julia's per-object tag word, which `sizeof` does not include."
+const OBJECT_HEADER = 8
 
-`Base.summarysize` — the whole retained graph, not the shallow `sizeof` — with
-a guard, since it can throw on exotic values. This is the number that answers
-"why is this thing 4 GB", and it costs a walk of the object to produce, which
-is why it is computed only on request and cached per node.
 """
-byte_size(@nospecialize(x)) = try
-    Base.summarysize(x)
+    SIZE_BUDGET
+
+How many distinct objects a size measurement may visit before giving up.
+"""
+const SIZE_BUDGET = 20_000
+
+"""
+    skip_for_size(x) -> Bool
+
+Whether `x` is runtime machinery rather than the user's data, and so should be
+counted as nothing and never walked into.
+
+This is not fussiness. `Base.summarysize` of a single `Method` is **111 MB**:
+a method reaches its module, its specializations and from there most of the
+runtime. Measuring the twenty rows of a function's method list would walk that
+twenty times over, which is enough to hang or exhaust a session — and the
+answer was never a fact about anyone's data.
+"""
+skip_for_size(@nospecialize(x)) =
+    x isa Module || x isa Type || x isa Method || x isa Core.MethodInstance ||
+    x isa Core.TypeName || x isa Core.SimpleVector
+
+"""
+    bounded_size(x; budget=SIZE_BUDGET) -> (bytes, truncated)
+
+Retained size of `x`, counting shared objects once, with a hard cap on how far
+it will look.
+
+`Base.summarysize` answers the same question but cannot be told to stop, and
+walks into runtime machinery that is not the caller's data — see
+[`skip_for_size`](@ref). This walk is bounded and refuses those, so the memory
+view cannot be made to hang the app by pointing it at the wrong row. When the
+budget runs out the result is reported as a lower bound rather than a number
+pretending to be exact.
+"""
+function bounded_size(@nospecialize(x); budget::Int=SIZE_BUDGET)
+    seen = Base.IdSet{Any}()
+    left = Ref(budget)
+    bytes = _measure(x, seen, left)
+    (bytes, left[] <= 0)
+end
+
+function _measure(@nospecialize(v), seen::Base.IdSet, left::Ref{Int})
+    left[] <= 0 && return 0
+    skip_for_size(v) && return 0
+    isbits(v) && return sizeof(v)
+    v in seen && return 0          # identity, so a shared child counts once
+    push!(seen, v)
+    left[] -= 1
+
+    total = _shallow_size(v) + OBJECT_HEADER
+    try
+        if v isa AbstractArray
+            # A bits array's elements are already inside `sizeof`.
+            isbitstype(eltype(v)) && return total
+            for i in eachindex(v)
+                left[] <= 0 && break
+                isassigned(v, i) || continue
+                total += _measure(v[i], seen, left)
+            end
+        elseif !(v isa AbstractString || v isa Symbol)
+            for i in 1:nfields(v)
+                left[] <= 0 && break
+                isdefined(v, i) || continue
+                total += _measure(getfield(v, i), seen, left)
+            end
+        end
+    catch
+        # An exotic container that will not be walked still has its own size.
+    end
+    total
+end
+
+"The object's own storage, before anything it points at."
+_shallow_size(@nospecialize(v)) = try
+    (v isa AbstractArray || v isa AbstractString) ? sizeof(v) : sizeof(typeof(v))
 catch
     0
 end
 
-# `summarysize` of a module walks everything that module can reach, which for
-# `Base` is the entire runtime and takes minutes. A module and a type are not
-# data whose footprint anyone is trying to account for, so they report nothing
-# rather than freezing the app to produce a number nobody wanted.
-byte_size(::Module) = 0
-byte_size(@nospecialize(::Type)) = 0
+"""
+    byte_size(x) -> Int
+
+Retained size of `x` in bytes — see [`bounded_size`](@ref), whose budget this
+inherits. A lower bound for anything too large to finish measuring.
+"""
+byte_size(@nospecialize(x)) = first(bounded_size(x))
 
 """
     human_bytes(n) -> String

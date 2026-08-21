@@ -19,6 +19,7 @@ mutable struct ObjectTree
     hide_same::Bool
     show_memory::Bool
     kinds::Symbol
+    pending::Vector{Tuple{ObjNode,Symbol}}
     last_area::Rect
     _rows::Vector{Row}
     _dirty::Bool
@@ -26,7 +27,7 @@ end
 
 function ObjectTree(root::ObjNode; selected::Int=1, focused::Bool=true, indent::Int=2)
     ObjectTree(root, selected, 0, focused, indent, "", false, false, :all,
-               Rect(), Row[], true)
+               Tuple{ObjNode,Symbol}[], Rect(), Row[], true)
 end
 
 function rows(t::ObjectTree)
@@ -38,6 +39,19 @@ function rows(t::ObjectTree)
 end
 
 invalidate!(t::ObjectTree) = (t._dirty = true; nothing)
+
+"""
+    request!(tree, node, kind)
+
+Note that `node` needs `kind` (`:bytes` or `:anomaly`) worked out, without
+working it out here.
+
+Rendering a frame must stay proportional to the screen. Scanning an array for
+`NaN`s, or walking an object to size it, is proportional to the *data*, so the
+renderer records what it wants and the model computes it off the main task —
+see `Narcissus.dispatch_work!`.
+"""
+request!(t::ObjectTree, n::ObjNode, kind::Symbol) = (push!(t.pending, (n, kind)); nothing)
 
 "The node under the cursor, or `nothing` when the tree is empty."
 function current_node(t::ObjectTree)
@@ -431,7 +445,7 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
     # The flag column is only worth its two cells when something can appear in
     # it. Decided once per frame so every row indents alike.
     flag_col = comparing(t) || any(i -> let idx = t.offset + i
-            idx <= n && node_anomaly(r[idx].node) !== nothing
+            idx <= n && !(anomaly_state(r[idx].node) in (:pending, :none))
         end, 1:visible)
 
     needs_sb = n > visible
@@ -489,11 +503,18 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
         # when there is nothing to say, so an ordinary tree gains no clutter.
         if flag_col
             status = node_status(node)
-            glyph, gstyle = status === :none ? anomaly_marker(node_anomaly(node)) :
-                                               status_marker(status)
+            glyph, gstyle = if status !== :none
+                status_marker(status)
+            else
+                flag = anomaly_state(node)
+                flag === :pending && request!(t, node, :anomaly)
+                anomaly_marker(flag in (:pending, :none) ? nothing : flag)
+            end
             glyph == ' ' || set_char!(buf, cx, y, glyph, gstyle)
             cx += 2
             cx > max_x && continue
+        else
+            anomaly_state(node) === :pending && request!(t, node, :anomaly)
         end
 
         matched = !isempty(t.query) &&
@@ -519,7 +540,7 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
 
         if t.show_memory
             cm = mem_x
-            for (text, style) in memory_spans(node)
+            for (text, style) in memory_spans(node, t)
                 cm = set_string!(buf, cm, y, text, style; max_x)
             end
             continue
