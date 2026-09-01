@@ -588,10 +588,12 @@ end
     m = explorer((losses = losses, fine = rand(200_000)), "s")
     press!(m, :right)
 
-    draw(m, 90, 10)
+    # `draw_once`, not `draw`: the latter waits for the detail pane, and the
+    # scans would land while it waited — which is the whole point of them.
+    draw_once(m, 90, 10)
     @test any(r -> anomaly_state(r.node) === :pending, rows(m.tree))
     # Nothing is flagged yet, so no column is reserved and nothing has shifted.
-    @test !occursin("!", screen(draw(m, 90, 10)))
+    @test !occursin("!", screen(draw_once(m, 90, 10)))
 
     settle!(m, 90, 10)
     @test anomaly_state(rows(m.tree)[2].node) === :nan

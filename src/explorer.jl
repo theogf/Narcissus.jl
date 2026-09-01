@@ -109,9 +109,10 @@ proportional to the screen. The renderer records what it wants (`Narcissus.reque
 spawns it, capped at [`MAX_IN_FLIGHT`](@ref) so that opening a wide row does
 not start a hundred walks at once. Results arrive as `TaskEvent`s.
 
-`Threads.@spawn` does the work, so it genuinely overlaps only when Julia was
-started with more than one thread; on a single thread it still moves the cost
-out from between the layout and the paint.
+`Threads.@spawn` does the work. A detail pane being rendered occupies one of
+the [`MAX_IN_FLIGHT`](@ref) slots as well, even though it is spawned from
+[`refresh_detail!`](@ref) rather than from here — it is the same kind of
+heavy job and belongs under the same ceiling.
 """
 function dispatch_work!(m::Explorer)
     isempty(m.tree.pending) && return nothing
