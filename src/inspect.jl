@@ -238,9 +238,9 @@ docs: a generic function does not carry its own documentation, the name it is
 bound to does. Anonymous functions and closures have no such binding and come
 back `nothing`.
 
-A `Method` is looked up by signature, so a method that carries its own
-docstring shows that one rather than everything written about the function —
-see [`doc_signature`](@ref) and [`has_method_doc`](@ref).
+A `Method` is looked up by signature and a `Type` by name alone, so each shows
+what was written about *it* rather than everything filed under the name — see
+[`doc_object`](@ref).
 
 Rendering goes through Julia's own Markdown writer at the given `width`, so
 headers, emphasis, lists and code blocks come out formatted rather than as raw
@@ -262,7 +262,7 @@ function docstring(@nospecialize(x); width::Int = 80, color::Bool = true)
             :limit => true,
             :displaysize => (40, max(20, width)),
         )
-        show(context, MIME"text/plain"(), Base.Docs.doc(binding, doc_signature(x)))
+        show(context, MIME"text/plain"(), doc_object(x, binding))
         text = String(take!(io))
         plain = strip_ansi(text)
         (occursin("No documentation found", plain) || isempty(strip(plain))) &&
@@ -317,6 +317,90 @@ doc_signature(@nospecialize(x)) = Union{}
 doc_signature(m::Method) = Base.tuple_type_tail(m.sig)
 
 """
+    doc_object(x, binding) -> the documentation to render
+
+Everything filed under `binding`, except where a narrower answer exists.
+
+A name collects docstrings from more than one thing. `push!` holds one for the
+function and one for each documented method; `Widget` holds one for the type
+and one for each documented constructor. Asking the docsystem for the binding
+asks for all of it, which answers "what is a `Widget`?" with the type's
+docstring followed by every constructor's — a page to scroll past to find the
+sentence you wanted.
+
+So a `Method` takes the entry matching its own signature, and a `Type` takes
+the entry written with no signature at all, which is the one attached to the
+type. Each falls back to the whole binding when it has nothing of its own,
+because a constructor's docstring is a better answer than none; [`_docs!`](@ref)
+labels that case so the two are not mistaken for each other.
+"""
+doc_object(@nospecialize(x), binding) = Base.Docs.doc(binding, doc_signature(x))
+
+function doc_object(@nospecialize(x::Type), binding)
+    own = own_doc(binding)
+    own === nothing ? Base.Docs.doc(binding) : own
+end
+
+"""
+    own_doc(binding) -> Union{Nothing,Any}
+
+The docstring written for a name itself — the one attached with no signature —
+or `nothing` when everything filed under that name belongs to a method or a
+constructor.
+
+There is no public way to ask this. `Docs.doc` selects by signature and every
+signature is a supertype of `Union{}`, so asking it for a bare binding asks for
+all of them; the entry we want is the one the docsystem keys by `Union{}`.
+"""
+function own_doc(binding)
+    for multidoc in multidocs(binding)
+        docstr = get(multidoc.docs, Union{}, nothing)
+        docstr === nothing || return try
+            Base.Docs.parsedoc(docstr)
+        catch
+            nothing
+        end
+    end
+    nothing
+end
+
+"""
+    multidocs(binding) -> Vector
+
+The docsystem's tables for a binding, one per module that wrote something under
+it — `Base.push!` collects an entry from every package that documents a method
+of it.
+
+Reaching into `Docs` internals, so anything unexpected is answered with nothing
+found: the callers all have a sound fallback, and none of this is worth an
+error in a pane that is only trying to describe a value.
+"""
+function multidocs(binding)
+    found = Any[]
+    try
+        for mod in Base.Docs.modules
+            table = Base.Docs.meta(mod; autoinit = false)
+            table === nothing && continue
+            multidoc = get(table, binding, nothing)
+            multidoc === nothing || push!(found, multidoc)
+        end
+    catch
+    end
+    found
+end
+
+"""
+    has_own_doc(x) -> Bool
+
+Whether a docstring was written for `x` itself, as opposed to for its methods
+or its constructors. See [`doc_object`](@ref).
+"""
+function has_own_doc(@nospecialize(x))
+    binding = doc_binding(x)
+    binding !== nothing && own_doc(binding) !== nothing
+end
+
+"""
     has_method_doc(m::Method) -> Bool
 
 Whether a docstring is filed under this method's own signature, as opposed to
@@ -325,22 +409,14 @@ one written for the function as a whole.
 The distinction is worth drawing because [`docstring`](@ref) falls back to
 every docstring on the binding when a method has none of its own — useful, but
 not a description of *this* method, and the pane should say which it is
-showing. Reads the docsystem's tables directly; anything unexpected there is
-answered with `false`, which only costs the note.
+showing.
 """
 function has_method_doc(m::Method)
     binding = doc_binding(m)
     binding === nothing && return false
     try
         sig = doc_signature(m)
-        for mod in Base.Docs.modules
-            table = Base.Docs.meta(mod; autoinit = false)
-            table === nothing && continue
-            multidoc = get(table, binding, nothing)
-            multidoc === nothing && continue
-            any(msig -> sig <: msig, multidoc.order) && return true
-        end
-        false
+        any(md -> any(msig -> sig <: msig, md.order), multidocs(binding))
     catch
         false
     end

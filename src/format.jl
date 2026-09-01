@@ -494,21 +494,27 @@ What you want from a function, a type or a method is almost never its `show`
 output — it is what the thing is *for*. The Markdown comes back as ANSI, which
 `parse_ansi` splits into styled spans, so the pane shows headers, emphasis and
 code blocks rather than a wall of asterisks.
+
+A value that has nothing of its own to say borrows from the name it shares —
+see [`doc_object`](@ref) — and the borrowing is labelled.
 """
 function _docs!(spans, @nospecialize(v), width::Int; separator::Bool = true)
     separator &&
         push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim = true)))
     text = docstring(v; width = max(20, width - 1))
     text === nothing && return push!(spans, Span("(no documentation)\n", _dim()))
-    # A method with no docstring of its own falls back to everything written
-    # about the function, which is worth showing and worth labelling — the
-    # alternative is a page of prose that looks like it describes this method.
-    v isa Method &&
-        !has_method_doc(v) &&
-        push!(
-            spans,
-            Span("(nothing on this method — the function's documentation)\n\n", _dim()),
-        )
+    # Nothing written about the thing itself falls back to what was written
+    # about its methods or its constructors, which is worth showing and worth
+    # labelling — the alternative is a page of prose that looks like it
+    # describes the value you are looking at.
+    note = if v isa Method && !has_method_doc(v)
+        "(nothing on this method — the function's documentation)\n\n"
+    elseif v isa Type && !has_own_doc(v)
+        "(nothing on the type itself — its constructors' documentation)\n\n"
+    else
+        ""
+    end
+    isempty(note) || push!(spans, Span(note, _dim()))
     append!(spans, parse_ansi(text))
     spans
 end
