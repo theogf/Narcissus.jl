@@ -40,6 +40,7 @@ mutable struct ObjNode
     next_start::Int     # `:elided` only — index to resume from
     limit::Int
     _preview::Union{Nothing,String}
+    _type::Union{Nothing,String}
     _status::Union{Nothing,Symbol}
     _anomaly::Union{Nothing,Symbol}   # `nothing` = not computed; `:none` = clean
     _bytes::Int                       # -1 = not computed
@@ -71,6 +72,7 @@ function ObjNode(
         n_components(mode, value),
         0,
         limit,
+        nothing,
         nothing,
         nothing,
         nothing,
@@ -198,6 +200,7 @@ function refresh_value!(n::ObjNode)
     (isempty(kids) || kids[1].key != n.key) && return false
     n.value = kids[1].value
     n._preview = nothing
+    n._type = nothing
     n._status = nothing
     n._anomaly = nothing
     n._bytes = -1
@@ -340,6 +343,9 @@ the rest to be worked out off the main task.
 """
 anomaly_state(n::ObjNode) = n._anomaly === nothing ? :pending : n._anomaly
 
+"Record a preview rendered elsewhere — see `Narcissus.compute_preview`."
+set_preview!(n::ObjNode, text::AbstractString) = (n._preview = String(text))
+
 "Record an anomaly computed elsewhere."
 set_anomaly!(n::ObjNode, a::Union{Nothing,Symbol}) = (n._anomaly = something(a, :none))
 
@@ -392,13 +398,33 @@ depth_of(n::ObjNode) = n.parent === nothing ? 0 : depth_of(n.parent) + 1
 
 # ── Flattening ───────────────────────────────────────────────────────
 
-"One visible line of the tree, with the ancestry needed to draw connectors."
+"""
+    Row
+
+One visible line of the tree, with the ancestry needed to draw its connectors.
+
+`lasts` is that ancestry as a bit per level rather than a `Vector{Bool}`: bit
+`k` says whether the ancestor at depth `k-1` was its parent's last child, and
+so whether a guide line continues down past this row at that indent. A vector
+would be two allocations on every row, and the row list is rebuilt whenever the
+tree changes — on a large object that is the difference between a keystroke you
+notice and one you do not. Depth beyond 64 draws no guide lines, which is what
+a vector would have done as well, and is 128 columns of indent regardless.
+"""
 struct Row
     node::ObjNode
     depth::Int
     is_last::Bool
-    parent_lasts::Vector{Bool}
+    lasts::UInt64
 end
+
+"""
+    last_at(lasts, k) -> Bool
+
+Whether the ancestor at depth `k-1` was its parent's last child — `true` past
+the 64 levels the mask holds, so an impossibly deep row simply draws no line.
+"""
+last_at(lasts::UInt64, k::Int) = k > 64 || !iszero(lasts & (UInt64(1) << (k - 1)))
 
 """
     flatten(root; hide_same=false, kinds=:all) -> Vector{Row}
@@ -416,12 +442,12 @@ container is untouched: a hidden subtree is simply never walked.
 """
 function flatten(root::ObjNode; hide_same::Bool = false, kinds::Symbol = :all)
     rows = Row[]
-    _flatten!(rows, root, 0, true, Bool[], hide_same, kinds)
+    _flatten!(rows, root, 0, true, UInt64(0), hide_same, kinds)
     rows
 end
 
-function _flatten!(rows, n::ObjNode, depth, is_last, parent_lasts, hide_same, kinds)
-    push!(rows, Row(n, depth, is_last, copy(parent_lasts)))
+function _flatten!(rows, n::ObjNode, depth, is_last, lasts::UInt64, hide_same, kinds)
+    push!(rows, Row(n, depth, is_last, lasts))
     n.expanded || return rows
 
     kids = n.children
@@ -430,9 +456,11 @@ function _flatten!(rows, n::ObjNode, depth, is_last, parent_lasts, hide_same, ki
         !(n.value isa Module) ||
         (kids = filter(c -> binding_kind(c.value) === kinds, kids))
 
-    lasts = vcat(parent_lasts, is_last)
+    # This row's own "last child" answer becomes the children's bit for its
+    # level; past 64 levels there is nowhere to put it and no room to draw it.
+    kid_lasts = depth < 64 && is_last ? lasts | (UInt64(1) << depth) : lasts
     for (i, c) in enumerate(kids)
-        _flatten!(rows, c, depth + 1, i == length(kids), lasts, hide_same, kinds)
+        _flatten!(rows, c, depth + 1, i == length(kids), kid_lasts, hide_same, kinds)
     end
     rows
 end

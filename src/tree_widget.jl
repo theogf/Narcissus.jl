@@ -21,6 +21,8 @@ mutable struct ObjectTree
     kinds::Symbol
     pending::Vector{Tuple{ObjNode,Symbol}}
     last_area::Rect
+    # Frames drawn, which is all the clock a spinner needs.
+    tick::Int
     _rows::Vector{Row}
     _dirty::Bool
 end
@@ -38,6 +40,7 @@ function ObjectTree(root::ObjNode; selected::Int = 1, focused::Bool = true, inde
         :all,
         Tuple{ObjNode,Symbol}[],
         Rect(),
+        0,
         Row[],
         true,
     )
@@ -268,6 +271,7 @@ function reload!(t::ObjectTree)
     n.value isa Module && forget_modules!()
     refresh_value!(n)
     n._preview = nothing
+    n._type = nothing
     n._status = nothing
     n.total = n_components(n.mode, n.value)
     n.expandable = expandable(n.mode, n.value)
@@ -440,7 +444,23 @@ function key_style(n::ObjNode)
     tstyle(:text)
 end
 
+"""
+    PREVIEW_BUDGET_NS
+
+How long a frame may spend rendering values before it hands the rest over.
+
+A frame has about sixteen milliseconds. Nearly every `show` costs microseconds
+and is done inline; the budget is what stops a row whose value takes a
+noticeable time to print from taking the whole frame with it, and every row
+after it. Those rows spin instead, and are rendered off the main task.
+"""
+const PREVIEW_BUDGET_NS = 5_000_000
+
 function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
+    # One tick per frame drawn: enough of a clock to turn a spinner with, and
+    # deterministic, which a wall clock would not be.
+    t.tick += 1
+    deadline = time_ns() + PREVIEW_BUDGET_NS
     (rect.width < 4 || rect.height < 1) && return
     t.last_area = rect
 
@@ -502,12 +522,12 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
 
         # Connectors from the ancestry.
         if row.depth > 0
-            # `parent_lasts[k]` is the "is last child" flag of the ancestor at
-            # depth k-1, so the guide line for indent slot d comes from d+1.
+            # Bit k of `lasts` is the "is last child" answer for the ancestor
+            # at depth k-1, so the guide line for indent slot d comes from d+1:
+            # a line continues past this row only where that ancestor had
+            # siblings still to come.
             for d = 1:(row.depth-1)
-                if cx <= max_x &&
-                   d + 1 <= length(row.parent_lasts) &&
-                   !row.parent_lasts[d+1]
+                if cx <= max_x && !last_at(row.lasts, d + 1)
                     set_char!(buf, cx, y, '│', conn)
                 end
                 cx += t.indent
@@ -544,8 +564,12 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
             anomaly_state(node) === :pending && request!(t, node, :anomaly)
         end
 
+        # `node_text_cheap`, so highlighting a match never renders a value the
+        # row has not rendered yet — it will match on the next frame, once the
+        # preview has arrived.
         matched =
-            !isempty(t.query) && occursin(lowercase(t.query), lowercase(node_text(node)))
+            !isempty(t.query) &&
+            occursin(lowercase(t.query), lowercase(node_text_cheap(node)))
         kstyle = matched ? tstyle(:warning, bold = true, underline = true) : key_style(node)
         cx = set_string!(buf, cx, y, node.key, kstyle; max_x = text_max_x)
 
@@ -577,7 +601,18 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
             continue
         end
 
-        segments = preview_spans(node, selected)
+        segments = if node._preview !== nothing
+            preview_spans(node, selected)
+        elseif time_ns() < deadline
+            # Cheap previews — which is nearly all of them — are still rendered
+            # right here, so an ordinary object never flickers through a screen
+            # of spinners on its way to being drawn.
+            preview(node)
+            preview_spans(node, selected)
+        else
+            request!(t, node, :preview)
+            pending_spans(t.tick)
+        end
         if !isempty(segments) && cx + 3 <= max_x
             cx = set_string!(buf, cx, y, " = ", conn; max_x)
             for (text, style) in segments

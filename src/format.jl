@@ -21,24 +21,97 @@ err_string(e) =
 squash(s::AbstractString) = replace(strip(s), r"\s*\n\s*" => " ")
 
 """
+    OutputFull
+
+Thrown at a `show` method that has written all anyone is going to read.
+"""
+struct OutputFull <: Exception end
+
+"""
+    CappedIO(cap)
+
+An `IO` that takes `cap` bytes and then stops the writer with [`OutputFull`](@ref).
+
+`:limit` bounds how much of a *container* Julia prints, and nothing bounds how
+much of a *structure* it prints: `show` of a 5 000-long linked list walks all
+5 000 links to produce the sixty characters a row has room for, and a struct
+that nests deeply enough will do the same. Since the caller knows how much text
+it can use, the honest bound is on the output, not on the value — a preview
+stops after a couple of hundred bytes no matter what it was printing.
+
+A `show` method that swallows exceptions simply runs to completion as before,
+which is slow but still correct.
+"""
+mutable struct CappedIO <: IO
+    buf::IOBuffer
+    cap::Int
+    written::Int
+end
+
+CappedIO(cap::Int) = CappedIO(IOBuffer(), cap, 0)
+
+function Base.write(c::CappedIO, byte::UInt8)
+    c.written >= c.cap && throw(OutputFull())
+    c.written += 1
+    write(c.buf, byte)
+end
+
+function Base.unsafe_write(c::CappedIO, p::Ptr{UInt8}, n::UInt)
+    room = c.cap - c.written
+    room <= 0 && throw(OutputFull())
+    taken = min(n, UInt(room))
+    written = unsafe_write(c.buf, p, taken)
+    c.written += Int(written)
+    written < n && throw(OutputFull())
+    written
+end
+
+"""
+    capped_text(io) -> String
+
+What a [`CappedIO`](@ref) collected, trimmed to whole characters — a cap counts
+bytes, and stopping mid-character would leave a string nothing can measure the
+width of.
+"""
+function capped_text(c::CappedIO)
+    bytes = take!(c.buf)
+    n = length(bytes)
+    while n > 0
+        text = String(@view bytes[1:n])
+        isvalid(text) && return text
+        n -= 1
+    end
+    ""
+end
+
+"How many bytes of `show` output a one-line preview is allowed to cost."
+const PREVIEW_CAP = 8
+
+"""
     compact_show(v; width, height) -> String
 
 `show(v)` under `:compact` and `:limit`, flattened to one line and clipped.
+
 Never throws: a broken `show` method becomes a visible marker instead of a
-crashed explorer.
+crashed explorer, and one that goes on forever is stopped once it has written
+[`PREVIEW_CAP`](@ref) times the characters that will be kept.
 """
 function compact_show(@nospecialize(v); width::Int = 60, height::Int = 2)
     try
-        io = IOBuffer()
+        capped = CappedIO(PREVIEW_CAP * max(20, width))
         ctx = IOContext(
-            io,
+            capped,
             :compact => true,
             :limit => true,
             :color => false,
             :displaysize => (height, max(20, width + 8)),
         )
-        show(ctx, v)
-        return truncate_text(squash(String(take!(io))), width)
+        try
+            show(ctx, v)
+        catch e
+            e isa OutputFull || rethrow()
+        end
+        return truncate_text(squash(capped_text(capped)), width)
     catch e
         return "«show error: $(nameof(typeof(e)))»"
     end
@@ -57,22 +130,43 @@ and asks again for more only when you scroll past it.
 """
 function plain_show(@nospecialize(v); width::Int = 80, height::Int = 200)
     try
-        io = IOBuffer()
+        # Room for the pane several times over, so nothing you can actually
+        # read is ever cut — and a `show` with no bottom to it still stops.
+        capped = CappedIO(4 * max(4, height) * max(20, width))
         ctx = IOContext(
-            io,
+            capped,
             :limit => true,
             :color => false,
             :displaysize => (max(4, height), max(20, width)),
         )
-        show(ctx, MIME"text/plain"(), v)
-        return String(take!(io))
+        try
+            show(ctx, MIME"text/plain"(), v)
+        catch e
+            e isa OutputFull || rethrow()
+        end
+        return capped_text(capped)
     catch e
         return "«show error: $(nameof(typeof(e)))»"
     end
 end
 
-"Full type name of a node's value, or a marker for the synthetic node kinds."
+"""
+    type_string(node) -> String
+
+Full type name of a node's value, or a marker for the synthetic node kinds.
+
+Cached on the node, like the preview and for the same reason: this is drawn on
+every visible row of every frame, and `string(typeof(v))` is not cheap —
+Julia's type printing searches the loaded modules for an alias to prefer
+(`Vector{Float64}` over `Array{Float64, 1}`), which on a screenful of rows at
+sixty frames a second is the single most expensive thing in the frame.
+"""
 function type_string(n::ObjNode)
+    n._type === nothing || return n._type
+    n._type = _type_string(n)
+end
+
+function _type_string(n::ObjNode)
     n.kind === :elided && return ""
     (n.value isa Undef || n.value isa AccessError) && return ""
     v = n.value
@@ -86,7 +180,7 @@ function type_string(n::ObjNode)
     # to know. Say "type" and let the value column carry the actual type.
     v isa Type && return "type"
     # `typeof(sin)` prints as `typeof(sin)`, which only repeats the value.
-    v isa Function && return "function"
+    v isa Function && return is_macro(v) ? "macro" : "function"
     string(typeof(v))
 end
 
@@ -98,7 +192,20 @@ use and cached: only rows you actually look at pay for their `show` method.
 """
 function preview(n::ObjNode)
     n._preview === nothing || return n._preview
-    s = if n.kind === :elided
+    n._preview = compute_preview(n)
+end
+
+"""
+    compute_preview(node) -> String
+
+The preview text, computed and *not* stored.
+
+Kept apart from [`preview`](@ref) because this is what runs off the main task
+(see `Narcissus.measure`): the result travels back as an event and is written
+to the node there, so the walk that produced it never touches the tree.
+"""
+function compute_preview(n::ObjNode)
+    if n.kind === :elided
         remaining = n.total - (n.next_start - 1)
         "$remaining more"
     elseif n.value isa Undef
@@ -112,8 +219,6 @@ function preview(n::ObjNode)
     else
         compact_show(n.value)
     end
-    n._preview = s
-    s
 end
 
 function _diff_preview(d::Diff, status::Symbol)
@@ -122,6 +227,25 @@ function _diff_preview(d::Diff, status::Symbol)
     status === :removed && return compact_show(d.x)
     compact_show(d.x; width = 28) * " → " * compact_show(d.y; width = 28)
 end
+
+"""
+    SPINNER
+
+The frames of the "still reading this one" marker, a braille wheel.
+
+A row whose value has not been rendered yet shows this instead, and keeps
+showing it while the render happens somewhere else — the point being that the
+frame is drawn either way. `show` methods that take a visible amount of time
+exist (a deeply nested structure, a value that computes something to print
+itself), and before this the whole app stopped for them.
+"""
+const SPINNER = ('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏')
+
+"The spinner frame for a tick count, slowed to something the eye can follow."
+spinner_char(tick::Int) = SPINNER[mod1(tick ÷ 4 + 1, length(SPINNER))]
+
+"The value column of a row whose preview has not arrived yet."
+pending_spans(tick::Int) = [(string(spinner_char(tick)), tstyle(:text_dim))]
 
 """
     preview_spans(node, selected) -> Vector{Tuple{String,Style}}
@@ -219,7 +343,7 @@ function kind_string(@nospecialize(v))
     v isa Tuple && return "tuple"
     v isa NamedTuple && return "named tuple"
     v isa Method && return "method"
-    v isa Function && return "function"
+    v isa Function && return is_macro(v) ? "macro" : "function"
     v isa Type && return "type"
     v isa Module && return "module"
     isprimitivetype(T) && return "primitive"

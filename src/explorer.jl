@@ -79,13 +79,25 @@ task_queue(m::Explorer) = m.work
 const MAX_IN_FLIGHT = 4
 
 """
+    MAX_PREVIEWS_IN_FLIGHT
+
+How many rows may be having their value rendered at once.
+
+Higher than [`MAX_IN_FLIGHT`](@ref) because these are not walks over an object
+— they are one `show` each, capped at a few hundred bytes — and because they
+are what the screen is made of: dribbling them out four at a time would leave
+a screenful of rows spinning for the better part of a second.
+"""
+const MAX_PREVIEWS_IN_FLIGHT = 64
+
+"""
     dispatch_work!(m)
 
 Hand whatever the last frame asked for to background tasks.
 
-Scanning an array for `NaN`s or walking an object to size it takes time
-proportional to the data, and a frame must take time proportional to the
-screen. The renderer records what it wants (`Narcissus.request!`) and this
+Scanning an array for `NaN`s, walking an object to size it, or asking a value
+to print itself takes time proportional to the data, and a frame must take time
+proportional to the screen. The renderer records what it wants (`Narcissus.request!`) and this
 spawns it, capped at [`MAX_IN_FLIGHT`](@ref) so that opening a wide row does
 not start a hundred walks at once. Results arrive as `TaskEvent`s.
 
@@ -95,11 +107,19 @@ out from between the layout and the paint.
 """
 function dispatch_work!(m::Explorer)
     isempty(m.tree.pending) && return nothing
+    previews = count(r -> r[2] === :preview, m.in_flight)
+    walks = length(m.in_flight) - previews
     for request in m.tree.pending
-        length(m.in_flight) >= MAX_IN_FLIGHT && break
         request in m.in_flight && continue
-        push!(m.in_flight, request)
         node, kind = request
+        if kind === :preview
+            previews >= MAX_PREVIEWS_IN_FLIGHT && continue
+            previews += 1
+        else
+            walks >= MAX_IN_FLIGHT && continue
+            walks += 1
+        end
+        push!(m.in_flight, request)
         spawn_task!(m.work, :measure) do
             (node, kind, measure(kind, node))
         end
@@ -112,6 +132,7 @@ end
 function measure(kind::Symbol, node::ObjNode)
     kind === :bytes && return bounded_size(node_measurand(node))
     kind === :anomaly && return node.value isa Diff ? nothing : anomaly(node.value)
+    kind === :preview && return compute_preview(node)
     nothing
 end
 
@@ -128,11 +149,20 @@ function update!(m::Explorer, e::TaskEvent)
     if kind === :bytes && result isa Tuple{Int,Bool}
         set_bytes!(node, result)
     elseif kind === :anomaly
+        # No `invalidate!`: an anomaly changes what a row *says*, never which
+        # rows there are, and whether the flag column appears is decided again
+        # every frame from the rows on screen. Rebuilding the row list here
+        # meant re-flattening the whole open tree once per measurement — with a
+        # screenful of rows arriving four at a time, that is the flatten storm
+        # that shows up in a profile of a large object.
         set_anomaly!(node, result isa Symbol ? result : nothing)
-        # An anomaly can bring the flag column into existence.
-        invalidate!(m.tree)
+    elseif kind === :preview && result isa String
+        set_preview!(node, result)
     end
-    m.revision += 1
+    # Nor a new revision: that is the detail pane's cache key, and a size or an
+    # anomaly appears in the tree, never in the pane. Bumping it here re-ran
+    # `show` on the selected value once per measurement — the same cost, in the
+    # same frames, as the row rebuild above.
     nothing
 end
 
@@ -516,6 +546,18 @@ end
 # ── Entry point ──────────────────────────────────────────────────────
 
 """
+    WARM_BUDGET_NS
+
+How long [`warm!`](@ref) may spend rendering rows before opening anyway.
+
+Enough that an ordinary object is drawn complete on its first frame, little
+enough that an object whose values are genuinely slow to print still opens
+promptly and finishes in the background — the rows it did not reach arrive with
+a spinner rather than a wait.
+"""
+const WARM_BUDGET_NS = 250_000_000
+
+"""
     warm!(model) -> model
 
 Render one frame off-screen, before the terminal is handed over.
@@ -538,6 +580,15 @@ function warm!(m::Explorer)
     try
         size = Tachikoma.terminal_size()
         rect = Rect(1, 1, max(20, size.cols), max(6, size.rows))
+        # Rendering the rows *here* rather than under the frame budget is what
+        # keeps a slow object from opening onto a screen of spinners: out here
+        # there is no frame to hold up, and `^C` still works. One screenful,
+        # for the same reason the renderer only draws one.
+        deadline = time_ns() + WARM_BUDGET_NS
+        for row in Iterators.take(rows(m.tree), rect.height)
+            time_ns() < deadline || break
+            preview(row.node)
+        end
         view(m, Frame(Buffer(rect), rect, GraphicsRegion[], PixelSnapshot[]))
     catch e
         e isa InterruptException && rethrow()

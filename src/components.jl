@@ -357,19 +357,37 @@ end
 """
     binding_kind(x) -> Symbol
 
-Which drawer of a module a binding belongs in: `:module`, `:type`, `:function`
-or `:value`. What `f` filters a module's listing by, since "show me the types
-this package defines" is a different question from "show me everything".
+Which drawer of a module a binding belongs in: `:module`, `:type`, `:macro`,
+`:function` or `:value`. What `f` filters a module's listing by, since "show me
+the types this package defines" is a different question from "show me
+everything".
 """
 function binding_kind(@nospecialize(x))
     x isa Module && return :module
     x isa Type && return :type
-    x isa Function && return :function
+    x isa Function && return is_macro(x) ? :macro : :function
     :value
 end
 
+"""
+    is_macro(x) -> Bool
+
+Whether a value is the function behind a macro.
+
+A macro is a function as far as Julia is concerned — `@time` is bound to a
+generic function like any other — and the only thing that says otherwise is the
+`@` its name starts with. A listing that files `@view` under "functions" is
+telling you something true and useless.
+"""
+is_macro(@nospecialize(x)) =
+    x isa Function && try
+        startswith(String(nameof(x)), "@")
+    catch
+        false
+    end
+
 "The filter categories `f` cycles through, in order."
-const BINDING_KINDS = (:all, :function, :type, :module, :value)
+const BINDING_KINDS = (:all, :function, :macro, :type, :module, :value)
 
 "Plural label for a binding category, for the pane title."
 kind_label(kind::Symbol) =
