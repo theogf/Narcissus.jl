@@ -50,9 +50,11 @@ Base.@kwdef mutable struct Explorer <: Model
     detail_key::Tuple{UInt,Int,Int} = (UInt(0), 0, 0)
     detail_budget::Int = 0
     detail_offset::Int = 0
-    # A pane whose value is slow to print is rendered off the main task; until
-    # it lands the pane shows a spinner rather than the frame stopping.
+    # The pane is rendered off the main task; while that is out, the previous
+    # one stays on screen and — if it takes long enough to notice — a spinner
+    # replaces it.
     detail_pending::Bool = false
+    detail_started::UInt64 = UInt64(0)
     revision::Int = 0
     focus::Symbol = :tree
     quit::Bool = false
@@ -138,7 +140,7 @@ end
 function measure(kind::Symbol, node::ObjNode)
     kind === :bytes && return bounded_size(node_measurand(node))
     kind === :anomaly && return node.value isa Diff ? nothing : anomaly(node.value)
-    kind === :preview && return timed_preview(node)
+    kind === :preview && return compute_preview(node)
     nothing
 end
 
@@ -162,8 +164,8 @@ function update!(m::Explorer, e::TaskEvent)
         # screenful of rows arriving four at a time, that is the flatten storm
         # that shows up in a profile of a large object.
         set_anomaly!(node, result isa Symbol ? result : nothing)
-    elseif kind === :preview && result isa Tuple{String,Bool}
-        set_preview!(node, result[1], result[2])
+    elseif kind === :preview && result isa String
+        set_preview!(node, result)
     elseif kind === :detail && result isa Tuple{Tuple{UInt,Int,Int},Vector{DetailLine}}
         # Only if it is still the pane anyone is looking at: a cursor that moved
         # on while this was rendering has already asked for something else.
@@ -347,6 +349,17 @@ end
 const DETAIL_LOOKAHEAD = 40
 
 """
+    DETAIL_SPINNER_NS
+
+How long the pane waits for its own rendering before admitting it is waiting.
+
+Long enough that an ordinary value — which lands in a frame or two — never
+flickers a spinner as the cursor moves, short enough that a value that is
+genuinely slow to print says so rather than looking like a frozen app.
+"""
+const DETAIL_SPINNER_NS = 120_000_000
+
+"""
     refresh_detail!(m, node, width, height)
 
 Rebuild the detail pane, but only when it would say something different.
@@ -354,8 +367,8 @@ Rebuild the detail pane, but only when it would say something different.
 Rendering a value costs a `show` call, which for a large object is the most
 expensive thing in the frame — so the pane is rebuilt when the selection, the
 pane width or the object changes, and never merely because a frame was drawn.
-A value that [`slow_to_show`](@ref) expects to be slow is rendered off the main
-task instead, so that selecting a row is never a wait.
+The rendering itself happens off the main task, so that selecting a row is
+never a wait, however long that row's `show` method takes.
 The `show` is also sized to the window you can see plus [`DETAIL_LOOKAHEAD`](@ref)
 lines; scrolling past that asks for a longer rendering, and only then.
 """
@@ -373,27 +386,27 @@ function refresh_detail!(m::Explorer, node::Union{Nothing,ObjNode}, width::Int, 
         m.detail_budget = needed
         if node === nothing
             m.detail = DetailLine[]
-        elseif slow_to_show(node)
+        else
             # The whole pane, rendered and wrapped off the main task. Both are
-            # pure reads of the node, and handing back finished lines means the
-            # frame that receives them does no work at all.
+            # pure reads of the node, so the frame that receives the lines does
+            # no work at all — and a value that takes a second to print costs a
+            # second of *its* time, not a second of the app being frozen.
             m.detail_pending = true
+            m.detail_started = time_ns()
             push!(m.in_flight, (node, :detail))
-            names, revision = m.names, key
+            names, requested = m.names, key
             spawn_task!(m.work, :measure) do
                 spans = detail_spans(node, width; names, height = needed)
-                (node, :detail, (revision, wrap_spans(spans, max(1, width - 1))))
+                (node, :detail, (requested, wrap_spans(spans, max(1, width - 1))))
             end
-        else
-            spans = detail_spans(node, width; names = m.names, height = needed)
-            m.detail = wrap_spans(spans, max(1, width - 1))
         end
     end
-    # Redrawn every frame while it is out, which is what turns the wheel.
-    m.detail_pending && (m.detail = [[(
-        spinner_char(m.tree.tick) * " rendering…",
-        tstyle(:text_dim),
-    )]])
+    # Nothing is blanked meanwhile: a fast value lands within a frame or two
+    # and the last pane is a better thing to be looking at than an empty one.
+    # Only a wait long enough to wonder about gets the spinner.
+    if m.detail_pending && time_ns() - m.detail_started > DETAIL_SPINNER_NS
+        m.detail = [[(spinner_char(m.tree.tick) * " rendering…", tstyle(:text_dim))]]
+    end
     nothing
 end
 

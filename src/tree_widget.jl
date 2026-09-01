@@ -23,6 +23,10 @@ mutable struct ObjectTree
     last_area::Rect
     # Frames drawn, which is all the clock a spinner needs.
     tick::Int
+    # Set once a value proves slow to print: from then on the frame renders no
+    # value itself. One such value is reason enough — a tree tends to hold more
+    # of the same kind, and each would otherwise cost another frame.
+    slow_previews::Bool
     _rows::Vector{Row}
     _dirty::Bool
 end
@@ -41,6 +45,7 @@ function ObjectTree(root::ObjNode; selected::Int = 1, focused::Bool = true, inde
         Tuple{ObjNode,Symbol}[],
         Rect(),
         0,
+        false,
         Row[],
         true,
     )
@@ -603,11 +608,15 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
 
         segments = if node._preview !== nothing
             preview_spans(node, selected)
-        elseif time_ns() < deadline
+        elseif !t.slow_previews && time_ns() < deadline
             # Cheap previews — which is nearly all of them — are still rendered
             # right here, so an ordinary object never flickers through a screen
-            # of spinners on its way to being drawn.
+            # of spinners on its way to being drawn. The first one that is not
+            # cheap ends that for this tree: the budget can decline to *start*
+            # a render, but nothing can cut one short once it has.
+            started = time_ns()
             preview(node)
+            time_ns() - started > SLOW_RENDER_NS && (t.slow_previews = true)
             preview_spans(node, selected)
         else
             request!(t, node, :preview)

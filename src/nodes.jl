@@ -40,7 +40,6 @@ mutable struct ObjNode
     next_start::Int     # `:elided` only — index to resume from
     limit::Int
     _preview::Union{Nothing,String}
-    _slow::Bool         # its `show` took long enough to keep off the main task
     _type::Union{Nothing,String}
     _status::Union{Nothing,Symbol}
     _anomaly::Union{Nothing,Symbol}   # `nothing` = not computed; `:none` = clean
@@ -74,7 +73,6 @@ function ObjNode(
         0,
         limit,
         nothing,
-        false,
         nothing,
         nothing,
         nothing,
@@ -356,28 +354,7 @@ the rest to be worked out off the main task.
 anomaly_state(n::ObjNode) = n._anomaly === nothing ? :pending : n._anomaly
 
 "Record a preview rendered elsewhere — see `Narcissus.compute_preview`."
-function set_preview!(n::ObjNode, text::AbstractString, slow::Bool = false)
-    n._slow = slow
-    n._preview = String(text)
-end
-
-"""
-    slow_to_show(node) -> Bool
-
-Whether printing this node's value is something to keep off the main task.
-
-Answered from the *preview*, which is the cheap rendering of the same value by
-the same `show` method: one that took a noticeable time to produce sixty
-characters will take longer to fill a pane. A node whose preview has not been
-rendered yet counts as slow too — it is only not rendered because a frame ran
-out of time for it.
-
-Guessing this from the small render rather than discovering it during the large
-one is what keeps an ordinary value out of the background, where a spinner
-between every cursor movement would be far worse than the microsecond it costs
-to just print it.
-"""
-slow_to_show(n::ObjNode) = n._preview === nothing || n._slow
+set_preview!(n::ObjNode, text::AbstractString) = (n._preview = String(text))
 
 "Record an anomaly computed elsewhere."
 set_anomaly!(n::ObjNode, a::Union{Nothing,Symbol}) = (n._anomaly = something(a, :none))
@@ -530,8 +507,7 @@ function find_node(
         return find_in_tail(root, predicate; budget, tail_budget, maxdepth, skip)
     load_children!(root)
     for c in root.children
-        found =
-            find_node(c, predicate; budget, tail_budget, maxdepth = maxdepth - 1, skip)
+        found = find_node(c, predicate; budget, tail_budget, maxdepth = maxdepth - 1, skip)
         found === nothing || return found
     end
     nothing

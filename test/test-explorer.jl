@@ -13,8 +13,24 @@
         toggle!
     import Tachikoma: view, update!
 
-    "Render a model into a TestBackend so its screen can be inspected."
+    """
+    Render a model into a TestBackend so its screen can be inspected, waiting
+    for the detail pane — which the app renders off the main task — the way a
+    few frames of the real loop would.
+    """
     function draw(m, width::Int = 90, height::Int = 20)
+        tb = draw_once(m, width, height)
+        for _ = 1:400
+            any(r -> r[2] === :detail, m.in_flight) || break
+            sleep(0.002)
+            drain_tasks!(e -> update!(m, e), m.work)
+            tb = draw_once(m, width, height)
+        end
+        tb
+    end
+
+    "One frame, exactly as the app draws it."
+    function draw_once(m, width::Int = 90, height::Int = 20)
         rect = Rect(1, 1, width, height)
         buf = Buffer(rect)
         view(m, Frame(buf, rect, GraphicsRegion[], PixelSnapshot[]))
@@ -480,7 +496,7 @@ end
 end
 
 @testitem "a slow value spins instead of blocking the frame" tags=[:unit] setup=[AppHarness] begin
-    using Narcissus: SPINNER, measure, compute_preview, preview, set_preview!
+    using Narcissus: SPINNER, measure, compute_preview, preview, set_preview!, DetailLine
 
     # No preview yet, and the frame budget already spent: the row draws a
     # spinner and asks for the value to be rendered somewhere else.
@@ -492,6 +508,7 @@ end
 
     # What the renderer would hand to a background task, and what comes back.
     @test measure(:preview, node) == compute_preview(node)
+    @test measure(:preview, node) isa String
     @test node._preview === nothing          # computing it off-thread stores nothing
     set_preview!(node, "from a task")
     @test preview(node) == "from a task"
@@ -499,6 +516,29 @@ end
     @test length(SPINNER) > 1
     @test Narcissus.spinner_char(0) != Narcissus.spinner_char(4)
     @test Narcissus.spinner_char(0) == Narcissus.spinner_char(4 * length(SPINNER))
+end
+
+@testitem "the detail pane renders off the main task" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: DETAIL_SPINNER_NS, SPINNER
+
+    m = explorer(sample_run())
+    stale = draw_once(m, 90, 20)             # one frame: the pane is asked for
+    @test m.detail_pending
+    @test (current_node(m.tree), :detail) in m.in_flight
+    @test !occursin("rendering", screen(stale))   # and nothing is blanked yet
+
+    tb = draw(m, 90, 20)                     # frames pass, the pane lands
+    @test !m.detail_pending
+    @test isempty(m.in_flight)
+    @test occursin("path", screen(tb))
+    @test occursin("Run", screen(tb))
+
+    # A wait long enough to wonder about says so.
+    m.detail_pending = true
+    m.detail_started = time_ns() - 2 * DETAIL_SPINNER_NS
+    waiting = screen(draw_once(m, 90, 20))
+    @test occursin("rendering", waiting)
+    @test any(c -> occursin(c, waiting), SPINNER)
 end
 
 @testitem "the memory column is right-aligned" tags=[:unit] setup=[AppHarness] begin
@@ -522,10 +562,12 @@ end
     press!(m, :right)
     press!(m, 'M')
 
-    # The first frame draws placeholders and asks for the work; it does not do it.
-    draw(m, 100, 10)
+    # The first frame draws placeholders and asks for the work; it does not do
+    # it. `draw_once`, because `draw` waits for the pane and would collect the
+    # measurements on the way.
+    draw_once(m, 100, 10)
     @test all(r -> bytes_state(r.node) < 0, rows(m.tree))
-    @test occursin("…", screen(draw(m, 100, 10)))
+    @test occursin("…", screen(draw_once(m, 100, 10)))
     @test !isempty(m.in_flight)
     @test length(m.in_flight) <= MAX_IN_FLIGHT      # capped, not a stampede
 
