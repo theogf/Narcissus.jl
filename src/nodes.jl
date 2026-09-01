@@ -40,6 +40,7 @@ mutable struct ObjNode
     next_start::Int     # `:elided` only — index to resume from
     limit::Int
     _preview::Union{Nothing,String}
+    _slow::Bool         # its `show` took long enough to keep off the main task
     _type::Union{Nothing,String}
     _status::Union{Nothing,Symbol}
     _anomaly::Union{Nothing,Symbol}   # `nothing` = not computed; `:none` = clean
@@ -73,6 +74,7 @@ function ObjNode(
         0,
         limit,
         nothing,
+        false,
         nothing,
         nothing,
         nothing,
@@ -173,9 +175,19 @@ function load_children!(n::ObjNode)
     n
 end
 
-"Append the window of children starting at `start`, plus an elision marker."
-function append_children!(n::ObjNode, start::Int)
-    kids = component_window(n.mode, n.value, start, n.limit)
+"""
+    append_children!(node, start, count=node.limit)
+
+Append the window of `count` children starting at `start`, plus an elision
+marker if that still does not reach the end.
+
+`count` is the window size only because a search that lands deep in a long
+container has to load its way there, and each window re-walks the container
+from the front: a thousand windows of a hundred is a thousand walks, one window
+of a hundred thousand is one.
+"""
+function append_children!(n::ObjNode, start::Int, count::Int = n.limit)
+    kids = component_window(n.mode, n.value, start, count)
     for (i, c) in enumerate(kids)
         push!(n.children, make_node(c, n, start + i - 1))
     end
@@ -344,7 +356,28 @@ the rest to be worked out off the main task.
 anomaly_state(n::ObjNode) = n._anomaly === nothing ? :pending : n._anomaly
 
 "Record a preview rendered elsewhere — see `Narcissus.compute_preview`."
-set_preview!(n::ObjNode, text::AbstractString) = (n._preview = String(text))
+function set_preview!(n::ObjNode, text::AbstractString, slow::Bool = false)
+    n._slow = slow
+    n._preview = String(text)
+end
+
+"""
+    slow_to_show(node) -> Bool
+
+Whether printing this node's value is something to keep off the main task.
+
+Answered from the *preview*, which is the cheap rendering of the same value by
+the same `show` method: one that took a noticeable time to produce sixty
+characters will take longer to fill a pane. A node whose preview has not been
+rendered yet counts as slow too — it is only not rendered because a frame ran
+out of time for it.
+
+Guessing this from the small render rather than discovering it during the large
+one is what keeps an ordinary value out of the background, where a spinner
+between every cursor movement would be far worse than the microsecond it costs
+to just print it.
+"""
+slow_to_show(n::ObjNode) = n._preview === nothing || n._slow
 
 "Record an anomaly computed elsewhere."
 set_anomaly!(n::ObjNode, a::Union{Nothing,Symbol}) = (n._anomaly = something(a, :none))
@@ -485,6 +518,7 @@ function find_node(
     root::ObjNode,
     predicate;
     budget::Ref{Int} = Ref(SEARCH_BUDGET),
+    tail_budget::Ref{Int} = Ref(TAIL_BUDGET),
     maxdepth::Int = 32,
     skip::Union{Nothing,ObjNode} = nothing,
 )
@@ -492,17 +526,19 @@ function find_node(
     maxdepth < 0 && return nothing
     root !== skip && predicate(root) && return root
     root.expandable || return nothing
-    root.kind === :elided && return find_in_tail(root, predicate; budget, maxdepth, skip)
+    root.kind === :elided &&
+        return find_in_tail(root, predicate; budget, tail_budget, maxdepth, skip)
     load_children!(root)
     for c in root.children
-        found = find_node(c, predicate; budget, maxdepth = maxdepth - 1, skip)
+        found =
+            find_node(c, predicate; budget, tail_budget, maxdepth = maxdepth - 1, skip)
         found === nothing || return found
     end
     nothing
 end
 
 """
-    find_in_tail(marker, predicate; budget, maxdepth, skip) -> Union{Nothing,ObjNode}
+    find_in_tail(marker, predicate; budget, tail_budget, maxdepth, skip)
 
 Search the components a `… N more` marker stands in for, and materialise only
 the branch that matches.
@@ -511,32 +547,43 @@ Candidates are built *detached* from the tree and thrown away again, so a
 search that comes up empty leaves the container exactly as truncated as it
 found it — the alternative, expanding window after window as the walk goes,
 answers "no match" by having quietly grown a thousand rows onto the screen. A
-hit is then loaded for real, one window at a time up to the element that
-matched, and looked up again in the tree proper: the same walk, on nodes that
-are actually there for the cursor to land on.
+hit is then loaded for real, up to the element that matched, and looked up
+again in the tree proper: the same walk, on nodes that are actually there for
+the cursor to land on.
 
-The elements are read in `limit`-sized windows and every candidate costs a
-node of the shared `budget`, so a search over a million-element array stops
-where any other search stops.
+The elements are read in windows and spend [`TAIL_BUDGET`](@ref) rather than
+the walk's own [`SEARCH_BUDGET`](@ref) — a budget that exists to bound how much
+tree a search grows, which is exactly what this does not do. Everything under a
+marker, including a truncated container inside one, shares the one tail budget.
 """
 function find_in_tail(
     marker::ObjNode,
     predicate;
     budget::Ref{Int},
+    tail_budget::Ref{Int},
     maxdepth::Int,
     skip::Union{Nothing,ObjNode},
 )
     parent = marker.parent
     parent === nothing && return nothing
     start = marker.next_start
-    while start <= marker.total && budget[] >= 0
+    while start <= marker.total && tail_budget[] >= 0
         window = component_window(parent.mode, parent.value, start, parent.limit)
         isempty(window) && break
         for (i, c) in enumerate(window)
             index = start + i - 1
-            # Siblings of the marker, so tested at the marker's own depth.
+            # Siblings of the marker, so tested at the marker's own depth — and
+            # against the tail budget, since none of this reaches the tree.
             probe = make_node(c, parent, index)
-            find_node(probe, predicate; budget, maxdepth, skip) === nothing ||
+            found = find_node(
+                probe,
+                predicate;
+                budget = tail_budget,
+                tail_budget,
+                maxdepth,
+                skip,
+            )
+            found === nothing ||
                 return realise_child!(parent, index, predicate, maxdepth, skip)
         end
         start += length(window)
@@ -555,7 +602,11 @@ function realise_child!(
     while index > length(parent.children) || parent.children[index].kind === :elided
         tail = last(parent.children)
         tail.kind === :elided || break
-        expand_elided!(tail)
+        # Straight to the match in one window rather than a hundred at a time:
+        # every window re-walks the container from the front, so loading a
+        # deep match a window at a time is quadratic in how deep it was.
+        filter!(c -> c !== tail, parent.children)
+        append_children!(parent, tail.next_start, index - tail.next_start + 1)
     end
     index <= length(parent.children) || return nothing
     # A fresh budget: this walk covers ground already paid for, and running out
@@ -581,6 +632,20 @@ first walk over a shape of object never seen before is slower, and that is
 Julia compiling the decomposition, not the search.
 """
 const SEARCH_BUDGET = 20_000
+
+"""
+    TAIL_BUDGET
+
+How many elements of truncated containers a deep search may test.
+
+Larger than [`SEARCH_BUDGET`](@ref), and separate from it, because these
+candidates are built and thrown away rather than kept: the cost is a `show` per
+leaf and nothing else, so the bound that matters is how long a search may take,
+not how much tree it may grow. Elements past it are not searched — a list long
+enough to matter is a list where the honest answer is "not in the first
+several hundred thousand".
+"""
+const TAIL_BUDGET = 500_000
 
 """
     reveal!(node)

@@ -72,6 +72,40 @@ end
     @test occursin("Grumpy", node_text(n))
 end
 
+@testitem "a runaway show is cut short" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: root_node, preview, compact_show, plain_show
+
+    chain = foldl((tail, i) -> Chain(i, tail), 1:20_000; init = nothing)
+
+    text = preview(root_node(chain, "c"))
+    @test length(text) <= 61                   # the row's width, plus the ellipsis
+    @test endswith(text, "…")
+
+    # The cap counts bytes, and never cuts a character in half.
+    @test isvalid(compact_show(chain))
+    @test isvalid(plain_show(chain; width = 40, height = 6))
+    @test length(plain_show(chain; width = 40, height = 6)) <= 4 * 6 * 40
+
+    # A cap, not a truncation: values that fit come back whole.
+    @test compact_show([1, 2, 3]) == "[1, 2, 3]"
+end
+
+@testitem "the row ancestry is a bitmask, not a vector" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: root_node, expand_recursive!, flatten, last_at
+
+    root = root_node(sample_branch(), "b")
+    expand_recursive!(root, 2)
+    rows = flatten(root)
+
+    # `leaf` is not the last field of `Branch`, so a guide line continues below
+    # it at its own indent; `tags` is the last, so nothing continues below that.
+    leaf_kid = only(r for r in rows if r.node.path == "b.leaf.α")
+    tags_kid = only(r for r in rows if r.node.path == "b.tags[:a]")
+    @test !last_at(leaf_kid.lasts, leaf_kid.depth)
+    @test last_at(tags_kid.lasts, tags_kid.depth)
+    @test last_at(UInt64(0), 65)               # past the mask, no line
+end
+
 @testitem "detail pane describes a value" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: root_node, detail_spans
 

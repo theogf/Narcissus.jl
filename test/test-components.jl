@@ -36,6 +36,13 @@
         ok::Int
     end
 
+    # Deep rather than wide: `show` walks all of it, and `:limit` does not
+    # bound nesting the way it bounds a container.
+    struct Chain
+        head::Int
+        tail::Any
+    end
+
     struct Grumpy end
     Base.show(io::IO, ::Grumpy) = error("this show method always throws")
 
@@ -279,6 +286,13 @@ end
     @test kind_label(:function) == "functions"
     @test kind_label(:value) == "values"
     @test kind_label(:all) == "all"
+
+    # A macro is a function with an `@` in its name, and nothing else says so.
+    @test binding_kind(getfield(Base, Symbol("@time"))) === :macro
+    @test binding_kind(getfield(Narcissus, Symbol("@narcissus"))) === :macro
+    @test !Narcissus.is_macro(sin)
+    @test :macro in BINDING_KINDS
+    @test kind_label(:macro) == "macros"
 end
 
 @testitem "documentation is found through the binding" tags=[:unit] setup=[Fixtures] begin
@@ -297,6 +311,57 @@ end
     @test docstring(x -> x + a) === nothing
     @test doc_binding(42) === nothing
     @test docstring(42) === nothing
+end
+
+@testitem "a method is documented by its own signature" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: docstring, strip_ansi, has_method_doc, doc_signature
+
+    "the function as a whole"
+    function documented end
+    "the one that takes an Int"
+    documented(x::Int) = x
+    documented(x::String) = x
+
+    int_method = only(methods(documented, Tuple{Int}))
+    str_method = only(methods(documented, Tuple{String}))
+
+    @test doc_signature(int_method) === Tuple{Int}
+    @test has_method_doc(int_method)
+    @test occursin("takes an Int", strip_ansi(docstring(int_method; color = false)))
+
+    # A method with nothing of its own falls back to the function's.
+    @test !has_method_doc(str_method)
+    @test occursin("as a whole", strip_ansi(docstring(str_method; color = false)))
+end
+
+@testitem "a type is documented by itself, not its constructors" tags=[:unit] setup=[
+    Fixtures,
+] begin
+    using Narcissus: docstring, strip_ansi, has_own_doc
+
+    "what a Widget is"
+    struct Widget
+        x::Int
+    end
+    "the two-argument constructor"
+    Widget(x::Int, y::Int) = Widget(x + y)
+
+    text = strip_ansi(docstring(Widget; color = false))
+    @test occursin("what a Widget is", text)
+    @test !occursin("two-argument", text)      # the constructors keep to themselves
+    @test has_own_doc(Widget)
+
+    # A type documented only through a constructor still shows that.
+    struct Undocumented
+        a::Int
+    end
+    "only the constructor is documented"
+    Undocumented(a::Int, b::Int) = Undocumented(a + b)
+    @test !has_own_doc(Undocumented)
+    @test occursin(
+        "only the constructor",
+        strip_ansi(docstring(Undocumented; color = false)),
+    )
 end
 
 @testitem "docstrings render as markdown" tags=[:unit] setup=[Fixtures] begin

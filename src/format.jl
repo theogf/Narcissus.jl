@@ -192,7 +192,32 @@ use and cached: only rows you actually look at pay for their `show` method.
 """
 function preview(n::ObjNode)
     n._preview === nothing || return n._preview
-    n._preview = compute_preview(n)
+    text, slow = timed_preview(n)
+    set_preview!(n, text, slow)
+    text
+end
+
+"""
+    SLOW_RENDER_NS
+
+How long a preview may take before its value is treated as slow to print.
+
+A tenth of a frame. Everything ordinary is three orders of magnitude under it;
+what is over it is a `show` method doing real work, and the detail pane will
+want to do that somewhere other than in the frame.
+"""
+const SLOW_RENDER_NS = 1_500_000
+
+"""
+    timed_preview(node) -> (text, slow)
+
+[`compute_preview`](@ref) with a stopwatch on it — see
+[`slow_to_show`](@ref). This is what runs off the main task.
+"""
+function timed_preview(n::ObjNode)
+    started = time_ns()
+    text = compute_preview(n)
+    (text, time_ns() - started > SLOW_RENDER_NS)
 end
 
 """
@@ -398,8 +423,8 @@ function detail_spans(n::ObjNode, width::Int; names = nothing, height::Int = 60)
             Span(
                 "Semantic view lists what the module offers; the field " *
                 "view lists everything it defines. Press f to keep " *
-                "only the functions, the types, the modules or the " *
-                "values.\n\n",
+                "only the functions, the macros, the types, the modules " *
+                "or the values.\n\n",
                 _dim(),
             ),
         )

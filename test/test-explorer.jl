@@ -442,6 +442,13 @@ end
     @test occursin("functions only", screen(draw(m)))
 
     press!(m, 'f')
+    @test m.tree.kinds === :macro
+    @test all(
+        r -> r.node.value isa Module || binding_kind(r.node.value) === :macro,
+        rows(m.tree),
+    )
+
+    press!(m, 'f')
     @test m.tree.kinds === :type
     @test all(
         r -> r.node.value isa Module || binding_kind(r.node.value) === :type,
@@ -470,6 +477,28 @@ end
     s = screen(draw(m, 110, 24))
     @test occursin("methods", s)
     @test occursin("List the parts of", s)        # the rendered docstring
+end
+
+@testitem "a slow value spins instead of blocking the frame" tags=[:unit] setup=[AppHarness] begin
+    using Narcissus: SPINNER, measure, compute_preview, preview, set_preview!
+
+    # No preview yet, and the frame budget already spent: the row draws a
+    # spinner and asks for the value to be rendered somewhere else.
+    m = explorer([1, 2, 3], "v")
+    press!(m, :right)
+    node = rows(m.tree)[2].node
+    node._preview = nothing
+    m.tree.pending = Tuple{Narcissus.ObjNode,Symbol}[]
+
+    # What the renderer would hand to a background task, and what comes back.
+    @test measure(:preview, node) == compute_preview(node)
+    @test node._preview === nothing          # computing it off-thread stores nothing
+    set_preview!(node, "from a task")
+    @test preview(node) == "from a task"
+
+    @test length(SPINNER) > 1
+    @test Narcissus.spinner_char(0) != Narcissus.spinner_char(4)
+    @test Narcissus.spinner_char(0) == Narcissus.spinner_char(4 * length(SPINNER))
 end
 
 @testitem "the memory column is right-aligned" tags=[:unit] setup=[AppHarness] begin

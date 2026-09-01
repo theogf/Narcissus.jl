@@ -379,12 +379,11 @@ generic function like any other — and the only thing that says otherwise is th
 `@` its name starts with. A listing that files `@view` under "functions" is
 telling you something true and useless.
 """
-is_macro(@nospecialize(x)) =
-    x isa Function && try
-        startswith(String(nameof(x)), "@")
-    catch
-        false
-    end
+is_macro(@nospecialize(x)) = x isa Function && try
+    startswith(String(nameof(x)), "@")
+catch
+    false
+end
 
 "The filter categories `f` cycles through, in order."
 const BINDING_KINDS = (:all, :function, :macro, :type, :module, :value)

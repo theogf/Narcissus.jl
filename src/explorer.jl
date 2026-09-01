@@ -25,8 +25,8 @@ const HELP_TEXT = """
   Find
     a / A            jump to the next / previous NaN, Inf, missing, empty
                      container, #undef or unreadable value
-    f                inside a module, list only functions / types / modules
-                     / values in turn
+    f                inside a module, list only functions / macros / types
+                     / modules / values in turn
     M                show what each row costs in memory instead of its value
 
   Comparing (narcissus(x, y))
@@ -41,12 +41,18 @@ const HELP_TEXT = """
   screen first, then opens the object up to keep looking.
 """
 
+"One wrapped line of the detail pane: styled pieces, already laid out."
+const DetailLine = Vector{Tuple{String,Style}}
+
 Base.@kwdef mutable struct Explorer <: Model
     tree::ObjectTree
-    detail::Vector{Vector{Tuple{String,Style}}} = Vector{Tuple{String,Style}}[]
+    detail::Vector{DetailLine} = DetailLine[]
     detail_key::Tuple{UInt,Int,Int} = (UInt(0), 0, 0)
     detail_budget::Int = 0
     detail_offset::Int = 0
+    # A pane whose value is slow to print is rendered off the main task; until
+    # it lands the pane shows a spinner rather than the frame stopping.
+    detail_pending::Bool = false
     revision::Int = 0
     focus::Symbol = :tree
     quit::Bool = false
@@ -132,7 +138,7 @@ end
 function measure(kind::Symbol, node::ObjNode)
     kind === :bytes && return bounded_size(node_measurand(node))
     kind === :anomaly && return node.value isa Diff ? nothing : anomaly(node.value)
-    kind === :preview && return compute_preview(node)
+    kind === :preview && return timed_preview(node)
     nothing
 end
 
@@ -156,8 +162,16 @@ function update!(m::Explorer, e::TaskEvent)
         # screenful of rows arriving four at a time, that is the flatten storm
         # that shows up in a profile of a large object.
         set_anomaly!(node, result isa Symbol ? result : nothing)
-    elseif kind === :preview && result isa String
-        set_preview!(node, result)
+    elseif kind === :preview && result isa Tuple{String,Bool}
+        set_preview!(node, result[1], result[2])
+    elseif kind === :detail && result isa Tuple{Tuple{UInt,Int,Int},Vector{DetailLine}}
+        # Only if it is still the pane anyone is looking at: a cursor that moved
+        # on while this was rendering has already asked for something else.
+        key, lines = result
+        if key == m.detail_key
+            m.detail = lines
+            m.detail_pending = false
+        end
     end
     # Nor a new revision: that is the detail pane's cache key, and a size or an
     # anomaly appears in the tree, never in the pane. Bumping it here re-ran
@@ -340,6 +354,8 @@ Rebuild the detail pane, but only when it would say something different.
 Rendering a value costs a `show` call, which for a large object is the most
 expensive thing in the frame — so the pane is rebuilt when the selection, the
 pane width or the object changes, and never merely because a frame was drawn.
+A value that [`slow_to_show`](@ref) expects to be slow is rendered off the main
+task instead, so that selecting a row is never a wait.
 The `show` is also sized to the window you can see plus [`DETAIL_LOOKAHEAD`](@ref)
 lines; scrolling past that asks for a longer rendering, and only then.
 """
@@ -349,15 +365,35 @@ function refresh_detail!(m::Explorer, node::Union{Nothing,ObjNode}, width::Int, 
         m.detail_key = key
         m.detail_budget = 0
         m.detail_offset = 0
+        m.detail_pending = false
     end
 
     needed = m.detail_offset + height + DETAIL_LOOKAHEAD
-    needed > m.detail_budget || return nothing
-    m.detail_budget = needed
-    spans =
-        node === nothing ? Span[] :
-        detail_spans(node, width; names = m.names, height = needed)
-    m.detail = wrap_spans(spans, max(1, width - 1))
+    if needed > m.detail_budget
+        m.detail_budget = needed
+        if node === nothing
+            m.detail = DetailLine[]
+        elseif slow_to_show(node)
+            # The whole pane, rendered and wrapped off the main task. Both are
+            # pure reads of the node, and handing back finished lines means the
+            # frame that receives them does no work at all.
+            m.detail_pending = true
+            push!(m.in_flight, (node, :detail))
+            names, revision = m.names, key
+            spawn_task!(m.work, :measure) do
+                spans = detail_spans(node, width; names, height = needed)
+                (node, :detail, (revision, wrap_spans(spans, max(1, width - 1))))
+            end
+        else
+            spans = detail_spans(node, width; names = m.names, height = needed)
+            m.detail = wrap_spans(spans, max(1, width - 1))
+        end
+    end
+    # Redrawn every frame while it is out, which is what turns the wheel.
+    m.detail_pending && (m.detail = [[(
+        spinner_char(m.tree.tick) * " rendering…",
+        tstyle(:text_dim),
+    )]])
     nothing
 end
 
