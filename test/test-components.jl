@@ -1,7 +1,17 @@
 @testsnippet Fixtures begin
-    using Narcissus: components, component_count, component_window, n_components,
-                     expandable, is_leaf, has_semantic_view, Undef, AccessError,
-                     Component, Semantic, Fields
+    using Narcissus:
+        components,
+        component_count,
+        component_window,
+        n_components,
+        expandable,
+        is_leaf,
+        has_semantic_view,
+        Undef,
+        AccessError,
+        Component,
+        Semantic,
+        Fields
 
     struct Leaf
         α::Float64
@@ -39,8 +49,7 @@
         Loop(name) = (l = new(name); l.me = l; l)
     end
 
-    sample_branch() = Branch(7, Leaf(0.5, "hi"), [1.0 2.0; 3.0 4.0],
-                             Dict(:a => 1, :b => 2))
+    sample_branch() = Branch(7, Leaf(0.5, "hi"), [1.0 2.0; 3.0 4.0], Dict(:a => 1, :b => 2))
 
     "The semantic window, which is what most of these tests care about."
     window(x, start, limit) = component_window(Semantic(), x, start, limit)
@@ -52,7 +61,7 @@
     Narcissus.has_semantic_view(::RingBuffer) = true
     Narcissus.component_count(::Semantic, r::RingBuffer) = r.len
     Narcissus.components(::Semantic, r::RingBuffer) =
-        (Component("[$i]", "{}.store[$i]", r.store[i]) for i in 1:r.len)
+        (Component("[$i]", "{}.store[$i]", r.store[i]) for i = 1:r.len)
 end
 
 @testitem "struct fields become components" tags=[:unit] setup=[Fixtures] begin
@@ -129,8 +138,7 @@ end
     fields(x) = component_window(Fields(), x, 1, 20)
 
     d = fields(Dict(:a => 1))
-    @test [k.key for k in d] ==
-          ["slots", "keys", "vals", "ndel", "count", "age", "idxfloor", "maxprobe"]
+    @test [k.key for k in d] == ["slots", "keys", "vals", "ndel", "count", "age", "idxfloor", "maxprobe"]
     @test all(k -> k.kind === :field, d)
     @test d[1].template == "{}.slots"
 
@@ -143,8 +151,7 @@ end
     end
 
     # A plain struct looks the same in both modes.
-    @test [k.key for k in fields(sample_branch())] ==
-          [k.key for k in window(sample_branch(), 1, 20)]
+    @test [k.key for k in fields(sample_branch())] == [k.key for k in window(sample_branch(), 1, 20)]
 end
 
 @testitem "has_semantic_view marks the dual-view types" tags=[:unit] setup=[Fixtures] begin
@@ -206,7 +213,7 @@ end
     using Narcissus: module_names, forget_modules!
 
     public = module_names(Narcissus)
-    everything = module_names(Narcissus; all=true)
+    everything = module_names(Narcissus; all = true)
     @test :narcissus in public
     @test :Component in public
     @test length(everything) > length(public)
@@ -295,7 +302,7 @@ end
 @testitem "docstrings render as markdown" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: docstring, strip_ansi
 
-    coloured = docstring(Narcissus.components; width=70)
+    coloured = docstring(Narcissus.components; width = 70)
     @test coloured !== nothing
     @test occursin('\e', coloured)                # formatting arrived as ANSI
 
@@ -307,7 +314,7 @@ end
 
     # Prose is wrapped to the width asked for — code blocks are Julia's and
     # are left alone, so compare line counts rather than assert a hard bound.
-    narrow = strip_ansi(docstring(Narcissus.components; width=40))
-    wide = strip_ansi(docstring(Narcissus.components; width=100))
+    narrow = strip_ansi(docstring(Narcissus.components; width = 40))
+    wide = strip_ansi(docstring(Narcissus.components; width = 100))
     @test count(==('\n'), narrow) > count(==('\n'), wide)
 end

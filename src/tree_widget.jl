@@ -25,14 +25,27 @@ mutable struct ObjectTree
     _dirty::Bool
 end
 
-function ObjectTree(root::ObjNode; selected::Int=1, focused::Bool=true, indent::Int=2)
-    ObjectTree(root, selected, 0, focused, indent, "", false, false, :all,
-               Tuple{ObjNode,Symbol}[], Rect(), Row[], true)
+function ObjectTree(root::ObjNode; selected::Int = 1, focused::Bool = true, indent::Int = 2)
+    ObjectTree(
+        root,
+        selected,
+        0,
+        focused,
+        indent,
+        "",
+        false,
+        false,
+        :all,
+        Tuple{ObjNode,Symbol}[],
+        Rect(),
+        Row[],
+        true,
+    )
 end
 
 function rows(t::ObjectTree)
     if t._dirty
-        t._rows = flatten(t.root; hide_same=t.hide_same, kinds=t.kinds)
+        t._rows = flatten(t.root; hide_same = t.hide_same, kinds = t.kinds)
         t._dirty = false
     end
     t._rows
@@ -130,8 +143,7 @@ function Tachikoma.handle_key!(t::ObjectTree, e::KeyEvent)::Bool
         node = current_node(t)
         if node !== nothing
             # In a comparison, "expand" means "show me what differs".
-            node.value isa Diff ? expand_differences!(node, 8) :
-                                  expand_recursive!(node, 2)
+            node.value isa Diff ? expand_differences!(node, 8) : expand_recursive!(node, 2)
             invalidate!(t)
         end
     elseif e.key == :char && e.char == 'c'
@@ -277,7 +289,7 @@ function jump!(predicate, t::ObjectTree, dir::Int, from::Int)
     r = rows(t)
     n = length(r)
     n == 0 && return false
-    for step in 1:n
+    for step = 1:n
         idx = mod1(from + dir * step, n)
         if predicate(r[idx].node)
             t.selected = idx
@@ -303,15 +315,19 @@ The deep walk also matches the values of *leaf* rows, which are cheap to
 render. It will not render a container's preview to search it — that is the
 expense the lazy tree exists to avoid.
 """
-function search!(t::ObjectTree, query::AbstractString, dir::Int=1;
-                 from::Int=t.selected, deep::Bool=true)
+function search!(
+    t::ObjectTree,
+    query::AbstractString,
+    dir::Int = 1;
+    from::Int = t.selected,
+    deep::Bool = true,
+)
     isempty(query) && return :none
     needle = lowercase(query)
 
-    named(n) = occursin(needle, lowercase(n.key)) ||
-               occursin(needle, lowercase(type_string(n)))
-    deep_match(n) = named(n) ||
-                    (!n.expandable && occursin(needle, lowercase(preview(n))))
+    named(n) =
+        occursin(needle, lowercase(n.key)) || occursin(needle, lowercase(type_string(n)))
+    deep_match(n) = named(n) || (!n.expandable && occursin(needle, lowercase(preview(n))))
 
     jump!(named, t, dir, from) && return :visible
 
@@ -337,7 +353,7 @@ The [`anomaly`](@ref) counterpart of [`search!`](@ref), with the same
 escalation: find the next `NaN`, `Inf`, `missing`, empty container, `#undef` or
 unreadable value, on screen if possible and in the unread object if not.
 """
-function hunt_anomaly!(t::ObjectTree, dir::Int=1; from::Int=t.selected)
+function hunt_anomaly!(t::ObjectTree, dir::Int = 1; from::Int = t.selected)
     here = current_node(t)
     # Excluding the row already under the cursor is what lets a second press
     # escalate: wrapping onto itself would otherwise look like a match.
@@ -360,7 +376,7 @@ Move the cursor to the next visible row that is not identical on both sides.
 Unlike [`search!`](@ref) this does not escalate: the branches that differ were
 opened when the comparison did, and the ones still closed matched.
 """
-next_difference!(t::ObjectTree, dir::Int=1; from::Int=t.selected) =
+next_difference!(t::ObjectTree, dir::Int = 1; from::Int = t.selected) =
     jump!(n -> is_difference(node_status(n)), t, dir, from)
 
 "Whether this tree is comparing two objects rather than exploring one."
@@ -415,12 +431,12 @@ end
 function key_style(n::ObjNode)
     # In a comparison, what matched is context; what changed is the point.
     node_status(n) === :same && return tstyle(:text_dim)
-    n.kind === :root   && return tstyle(:title, bold=true)
-    n.kind === :field  && return tstyle(:primary, bold=true)
-    n.kind === :index  && return tstyle(:accent)
-    n.kind === :key    && return tstyle(:warning)
-    n.kind === :cycle  && return tstyle(:error, bold=true)
-    n.kind === :elided && return tstyle(:text_dim, italic=true)
+    n.kind === :root && return tstyle(:title, bold = true)
+    n.kind === :field && return tstyle(:primary, bold = true)
+    n.kind === :index && return tstyle(:accent)
+    n.kind === :key && return tstyle(:warning)
+    n.kind === :cycle && return tstyle(:error, bold = true)
+    n.kind === :elided && return tstyle(:text_dim, italic = true)
     tstyle(:text)
 end
 
@@ -444,22 +460,27 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
 
     # The flag column is only worth its two cells when something can appear in
     # it. Decided once per frame so every row indents alike.
-    flag_col = comparing(t) || any(i -> let idx = t.offset + i
-            idx <= n && !(anomaly_state(r[idx].node) in (:pending, :none))
-        end, 1:visible)
+    flag_col =
+        comparing(t) || any(
+            i -> let idx = t.offset + i
+                idx <= n && !(anomaly_state(r[idx].node) in (:pending, :none))
+            end,
+            1:visible,
+        )
 
     needs_sb = n > visible
-    text_area = needs_sb && rect.width > 1 ?
-        Rect(rect.x, rect.y, rect.width - 1, rect.height) : rect
+    text_area =
+        needs_sb && rect.width > 1 ? Rect(rect.x, rect.y, rect.width - 1, rect.height) :
+        rect
     max_x = right(text_area)
-    conn = tstyle(:border, dim=true)
+    conn = tstyle(:border, dim = true)
 
     # The memory column is right-aligned to the pane, so sizes and percentages
     # line up down the screen. Everything else gets the width that is left.
     mem_x = max_x - MEMORY_COLUMN_WIDTH + 1
     text_max_x = t.show_memory ? mem_x - 2 : max_x
 
-    for i in 1:visible
+    for i = 1:visible
         idx = t.offset + i
         idx > n && break
         row = r[idx]
@@ -469,8 +490,13 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
 
         cx = text_area.x
         if selected
-            set_char!(buf, cx, y, '▌',
-                      t.focused ? tstyle(:accent, bold=true) : tstyle(:text_dim))
+            set_char!(
+                buf,
+                cx,
+                y,
+                '▌',
+                t.focused ? tstyle(:accent, bold = true) : tstyle(:text_dim),
+            )
         end
         cx += 2
 
@@ -478,9 +504,10 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
         if row.depth > 0
             # `parent_lasts[k]` is the "is last child" flag of the ancestor at
             # depth k-1, so the guide line for indent slot d comes from d+1.
-            for d in 1:(row.depth - 1)
-                if cx <= max_x && d + 1 <= length(row.parent_lasts) &&
-                   !row.parent_lasts[d + 1]
+            for d = 1:(row.depth-1)
+                if cx <= max_x &&
+                   d + 1 <= length(row.parent_lasts) &&
+                   !row.parent_lasts[d+1]
                     set_char!(buf, cx, y, '│', conn)
                 end
                 cx += t.indent
@@ -517,25 +544,29 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
             anomaly_state(node) === :pending && request!(t, node, :anomaly)
         end
 
-        matched = !isempty(t.query) &&
-                  occursin(lowercase(t.query), lowercase(node_text(node)))
-        kstyle = matched ? tstyle(:warning, bold=true, underline=true) : key_style(node)
-        cx = set_string!(buf, cx, y, node.key, kstyle; max_x=text_max_x)
+        matched =
+            !isempty(t.query) && occursin(lowercase(t.query), lowercase(node_text(node)))
+        kstyle = matched ? tstyle(:warning, bold = true, underline = true) : key_style(node)
+        cx = set_string!(buf, cx, y, node.key, kstyle; max_x = text_max_x)
 
         ty = type_string(node)
         if !isempty(ty) && cx <= text_max_x
-            cx = set_string!(buf, cx, y, "::", conn; max_x=text_max_x)
-            type_style = node_status(node) === :type ? tstyle(:error) :
-                                                       tstyle(:secondary)
-            width_for_type = t.show_memory ? text_max_x - cx + 1 :
-                                             max(8, (max_x - cx) ÷ 2)
-            cx = set_string!(buf, cx, y, truncate_text(ty, width_for_type),
-                             type_style; max_x=text_max_x)
+            cx = set_string!(buf, cx, y, "::", conn; max_x = text_max_x)
+            type_style = node_status(node) === :type ? tstyle(:error) : tstyle(:secondary)
+            width_for_type = t.show_memory ? text_max_x - cx + 1 : max(8, (max_x - cx) ÷ 2)
+            cx = set_string!(
+                buf,
+                cx,
+                y,
+                truncate_text(ty, width_for_type),
+                type_style;
+                max_x = text_max_x,
+            )
         end
 
         # Only worth saying when the row is showing storage instead of meaning.
         if node.mode isa Fields && has_semantic_view(node.value) && cx <= max_x
-            cx = set_string!(buf, cx, y, " ·fields", tstyle(:warning, dim=true); max_x)
+            cx = set_string!(buf, cx, y, " ·fields", tstyle(:warning, dim = true); max_x)
         end
 
         if t.show_memory
@@ -551,15 +582,24 @@ function Tachikoma.render(t::ObjectTree, rect::Rect, buf::Buffer)
             cx = set_string!(buf, cx, y, " = ", conn; max_x)
             for (text, style) in segments
                 cx > max_x && break
-                cx = set_string!(buf, cx, y, truncate_text(text, max_x - cx + 1),
-                                 style; max_x)
+                cx = set_string!(
+                    buf,
+                    cx,
+                    y,
+                    truncate_text(text, max_x - cx + 1),
+                    style;
+                    max_x,
+                )
             end
         end
     end
 
     if needs_sb && rect.width > 1
-        render(Scrollbar(n, visible, t.offset),
-               Rect(right(rect), rect.y, 1, rect.height), buf)
+        render(
+            Scrollbar(n, visible, t.offset),
+            Rect(right(rect), rect.y, 1, rect.height),
+            buf,
+        )
     end
     nothing
 end

@@ -1,8 +1,21 @@
 @testsnippet DiffFixtures begin
-    using Narcissus: Diff, Absent, diff_status, comparable, same_value,
-                     trustworthy_equality, component_window, n_components,
-                     root_node, flatten, node_status, expand_differences!,
-                     expand_recursive!, node_text, Semantic, Fields
+    using Narcissus:
+        Diff,
+        Absent,
+        diff_status,
+        comparable,
+        same_value,
+        trustworthy_equality,
+        component_window,
+        n_components,
+        root_node,
+        flatten,
+        node_status,
+        expand_differences!,
+        expand_recursive!,
+        node_text,
+        Semantic,
+        Fields
 
     struct Cfg
         lr::Float64
@@ -14,7 +27,7 @@
         cfg::Cfg
     end
 
-    sides(d, mode=Semantic()) = component_window(mode, d, 1, 20)
+    sides(d, mode = Semantic()) = component_window(mode, d, 1, 20)
     statuses(root) = [node_status(r.node) for r in flatten(root)]
 end
 

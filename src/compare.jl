@@ -46,11 +46,12 @@ function comparable(@nospecialize(a), @nospecialize(b))
     nameof(typeof(a)) === nameof(typeof(b))
 end
 
-_safe_isequal(@nospecialize(a), @nospecialize(b)) = try
-    isequal(a, b)
-catch
-    a === b
-end
+_safe_isequal(@nospecialize(a), @nospecialize(b)) =
+    try
+        isequal(a, b)
+    catch
+        a === b
+    end
 
 # ── Structural equality ──────────────────────────────────────────────
 
@@ -60,11 +61,12 @@ const EQUALITY_BUDGET = 100_000
 "How deep a structural comparison may recurse before giving up."
 const EQUALITY_DEPTH = 64
 
-_generic_eq(@nospecialize(T::Type)) = try
-    which(==, Tuple{T,T}).sig === Tuple{typeof(==),Any,Any}
-catch
-    true
-end
+_generic_eq(@nospecialize(T::Type)) =
+    try
+        which(==, Tuple{T,T}).sig === Tuple{typeof(==),Any,Any}
+    catch
+        true
+    end
 
 const _TRUST_CACHE = IdDict{Type,Bool}()
 
@@ -96,7 +98,8 @@ function _trustworthy_equality(@nospecialize(T::Type))
     T <: AbstractSet && return trustworthy_equality(eltype(T))
     T <: AbstractDict &&
         return trustworthy_equality(keytype(T)) && trustworthy_equality(valtype(T))
-    (T <: Tuple || T <: NamedTuple) && isconcretetype(T) &&
+    (T <: Tuple || T <: NamedTuple) &&
+        isconcretetype(T) &&
         return all(trustworthy_equality, fieldtypes(T))
     true
 end
@@ -116,8 +119,13 @@ when the question got too expensive to settle.
 same_value(mode::ExplorationMode, @nospecialize(a), @nospecialize(b)) =
     _same(mode, a, b, Ref(EQUALITY_BUDGET), 0)
 
-function _same(mode::ExplorationMode, @nospecialize(a), @nospecialize(b),
-               budget::Ref{Int}, depth::Int)
+function _same(
+    mode::ExplorationMode,
+    @nospecialize(a),
+    @nospecialize(b),
+    budget::Ref{Int},
+    depth::Int,
+)
     a === b && return true
     (budget[] -= 1) < 0 && return false
     depth > EQUALITY_DEPTH && return false
@@ -132,12 +140,19 @@ end
 
 # Built-in containers are walked directly rather than through `components`:
 # same answer, without allocating a Component per element.
-function _same_parts(mode::ExplorationMode, @nospecialize(a), @nospecialize(b),
-                     budget::Ref{Int}, depth::Int)
+function _same_parts(
+    mode::ExplorationMode,
+    @nospecialize(a),
+    @nospecialize(b),
+    budget::Ref{Int},
+    depth::Int,
+)
     if mode isa Semantic
-        a isa AbstractArray && b isa AbstractArray &&
+        a isa AbstractArray &&
+            b isa AbstractArray &&
             return _same_array(mode, a, b, budget, depth)
-        a isa AbstractDict && b isa AbstractDict &&
+        a isa AbstractDict &&
+            b isa AbstractDict &&
             return _same_dict(mode, a, b, budget, depth)
         a isa AbstractSet && b isa AbstractSet && return issetequal(a, b)
         # A type with a hand-written semantic view is compared through it.
@@ -171,11 +186,16 @@ function _same_dict(mode, a, b, budget::Ref{Int}, depth::Int)
     true
 end
 
-function _same_fields(mode, @nospecialize(a), @nospecialize(b),
-                      budget::Ref{Int}, depth::Int)
+function _same_fields(
+    mode,
+    @nospecialize(a),
+    @nospecialize(b),
+    budget::Ref{Int},
+    depth::Int,
+)
     Ta, Tb = typeof(a), typeof(b)
     fieldnames(Ta) == fieldnames(Tb) || return false
-    for i in 1:fieldcount(Ta)
+    for i = 1:fieldcount(Ta)
         da, db = isdefined(a, i), isdefined(b, i)
         da == db || return false
         da || continue
@@ -185,8 +205,13 @@ function _same_fields(mode, @nospecialize(a), @nospecialize(b),
     true
 end
 
-function _same_via_components(mode, @nospecialize(a), @nospecialize(b),
-                              budget::Ref{Int}, depth::Int)
+function _same_via_components(
+    mode,
+    @nospecialize(a),
+    @nospecialize(b),
+    budget::Ref{Int},
+    depth::Int,
+)
     n_components(mode, a) == n_components(mode, b) || return false
     for c in components(mode, Diff(a, b))
         c.value isa Diff || continue
@@ -217,7 +242,7 @@ Equality is [`same_value`](@ref), not plain `isequal`, so two `deepcopy`-equal
 mutable structs come back `:same`. It walks the value, so the explorer caches
 the answer per node rather than asking once per frame.
 """
-function diff_status(d::Diff, mode::ExplorationMode=Semantic())
+function diff_status(d::Diff, mode::ExplorationMode = Semantic())
     d.x isa Absent && return :added
     d.y isa Absent && return :removed
     comparable(d.x, d.y) || return :type
@@ -242,10 +267,8 @@ component_count(::Fields, d::Diff) = _zip_count(Fields(), d)
 
 function components(::Semantic, d::Diff)
     is_leaf(d) && return Component[]
-    d.x isa AbstractDict && d.y isa AbstractDict &&
-        return _dict_diff_components(d.x, d.y)
-    d.x isa AbstractSet && d.y isa AbstractSet &&
-        return _set_diff_components(d.x, d.y)
+    d.x isa AbstractDict && d.y isa AbstractDict && return _dict_diff_components(d.x, d.y)
+    d.x isa AbstractSet && d.y isa AbstractSet && return _set_diff_components(d.x, d.y)
     _zip_components(Semantic(), d)
 end
 
@@ -285,7 +308,7 @@ _pad(it, k::Int) =
 
 function _pair(cx::Component, cy::Component)
     present = cx.kind === :absent ? cy : cx
-    Component(present.key, present.template, Diff(cx.value, cy.value); kind=present.kind)
+    Component(present.key, present.template, Diff(cx.value, cy.value); kind = present.kind)
 end
 
 # ── Key pairing: dictionaries and sets in semantic mode ──────────────
@@ -298,14 +321,18 @@ end
 
 function _entry_diff(@nospecialize(k), @nospecialize(vx), @nospecialize(vy))
     r = _saferepr(k)
-    Component(r, "{}[$r]", Diff(vx, vy); kind=:key)
+    Component(r, "{}[$r]", Diff(vx, vy); kind = :key)
 end
 
 # A set has no index to point at, so a member's path is the set itself.
 function _set_diff_components(x::AbstractSet, y::AbstractSet)
-    shared = (Component(_saferepr(v), "{}", Diff(v, v in y ? v : Absent()); kind=:key)
-              for v in x)
-    added = (Component(_saferepr(v), "{}", Diff(Absent(), v); kind=:key)
-             for v in y if !(v in x))
+    shared = (
+        Component(_saferepr(v), "{}", Diff(v, v in y ? v : Absent()); kind = :key) for
+        v in x
+    )
+    added = (
+        Component(_saferepr(v), "{}", Diff(Absent(), v); kind = :key) for
+        v in y if !(v in x)
+    )
     Iterators.flatten((shared, added))
 end

@@ -1,7 +1,7 @@
 using Narcissus
 using Documenter
 
-DocMeta.setdocmeta!(Narcissus, :DocTestSetup, :(using Narcissus); recursive=true)
+DocMeta.setdocmeta!(Narcissus, :DocTestSetup, :(using Narcissus); recursive = true)
 
 # Add titles of sections and overrides page titles
 const titles = Dict(
@@ -9,7 +9,7 @@ const titles = Dict(
     "91-developer.md" => "Developer docs",
 )
 
-function recursively_list_pages(folder; path_prefix="")
+function recursively_list_pages(folder; path_prefix = "")
     pages_list = Any[]
     for file in readdir(folder)
         if file == "index.md"
@@ -23,7 +23,7 @@ function recursively_list_pages(folder; path_prefix="")
 
         if isdir(fullpath)
             # If this is a folder, enter the recursion case
-            subsection = recursively_list_pages(fullpath; path_prefix=relpath)
+            subsection = recursively_list_pages(fullpath; path_prefix = relpath)
 
             # Ignore empty folders
             if length(subsection) > 0
@@ -59,12 +59,12 @@ function list_pages()
 end
 
 makedocs(;
-    modules=[Narcissus],
-    authors="Théo Galy-Fajou <theo.galyfajou@gmail.com>",
-    repo="https://github.com/theogf/Narcissus.jl/blob/{commit}{path}#{line}",
-    sitename="Narcissus.jl",
-    format=Documenter.HTML(; canonical="https://theogf.github.io/Narcissus.jl"),
-    pages=list_pages(),
+    modules = [Narcissus],
+    authors = "Théo Galy-Fajou <theo.galyfajou@gmail.com>",
+    repo = "https://github.com/theogf/Narcissus.jl/blob/{commit}{path}#{line}",
+    sitename = "Narcissus.jl",
+    format = Documenter.HTML(; canonical = "https://theogf.github.io/Narcissus.jl"),
+    pages = list_pages(),
 )
 
-deploydocs(; repo="github.com/theogf/Narcissus.jl")
+deploydocs(; repo = "github.com/theogf/Narcissus.jl")

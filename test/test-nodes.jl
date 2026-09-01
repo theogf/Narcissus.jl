@@ -39,7 +39,7 @@ end
 @testitem "long containers elide and load on demand" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: root_node, flatten, toggle!, expand_elided!
 
-    root = root_node(collect(1:1000), "v"; limit=10)
+    root = root_node(collect(1:1000), "v"; limit = 10)
     toggle!(root)
     rows = flatten(root)
     @test length(rows) == 12                     # root + 10 elements + elision
@@ -84,8 +84,15 @@ end
 end
 
 @testitem "mode belongs to a node and its subtree" tags=[:unit] setup=[Fixtures] begin
-    using Narcissus: root_node, flatten, expand_recursive!, toggle_mode!, set_mode!,
-                     Semantic, Fields, mode_name
+    using Narcissus:
+        root_node,
+        flatten,
+        expand_recursive!,
+        toggle_mode!,
+        set_mode!,
+        Semantic,
+        Fields,
+        mode_name
 
     root = root_node(Dict(:a => [1.0, 2.0]), "d")
     expand_recursive!(root, 1)
@@ -125,11 +132,10 @@ end
 @testitem "a root can start in field mode" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: root_node, flatten, expand_recursive!, Fields, exploration_mode
 
-    root = root_node([1.0, 2.0], "v"; mode=Fields())
+    root = root_node([1.0, 2.0], "v"; mode = Fields())
     expand_recursive!(root, 0)
     # Julia's own answer, so this holds whether or not Array exposes fields.
-    @test [r.node.key for r in flatten(root)] ==
-          ["v"; [String(n) for n in fieldnames(Vector{Float64})]]
+    @test [r.node.key for r in flatten(root)] == ["v"; [String(n) for n in fieldnames(Vector{Float64})]]
 
     @test exploration_mode(:fields) isa Fields
     @test_throws ArgumentError exploration_mode(:nonsense)
@@ -224,6 +230,6 @@ end
     @test byte_size(loop) > 0
 
     # The budget is a hard stop, and the result says it is a lower bound.
-    _, capped = bounded_size([rand(3) for _ in 1:50_000]; budget=500)
+    _, capped = bounded_size([rand(3) for _ = 1:50_000]; budget = 500)
     @test capped
 end

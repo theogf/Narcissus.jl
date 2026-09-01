@@ -28,11 +28,27 @@
         named::NamedTuple{(:a, :b),Tuple{Int,Float64}}
     end
 
-    sample() = _PRoot("run", _PLeaf(0.5, "hi"), [1.0, 2.0, 3.0], [1.0 2.0; 3.0 4.0],
-                      Dict(:a => 1, :b => 2), Set([1, 2]), (1, "two"), (a = 1, b = 2.0))
+    sample() = _PRoot(
+        "run",
+        _PLeaf(0.5, "hi"),
+        [1.0, 2.0, 3.0],
+        [1.0 2.0; 3.0 4.0],
+        Dict(:a => 1, :b => 2),
+        Set([1, 2]),
+        (1, "two"),
+        (a = 1, b = 2.0),
+    )
 
-    other() = _PRoot("run2", _PLeaf(0.25, "hi"), [1.0, 2.0], [1.0 2.0; 3.0 5.0],
-                     Dict(:a => 1, :c => 3), Set([2, 3]), (1, "two"), (a = 2, b = 2.0))
+    other() = _PRoot(
+        "run2",
+        _PLeaf(0.25, "hi"),
+        [1.0, 2.0],
+        [1.0 2.0; 3.0 5.0],
+        Dict(:a => 1, :c => 3),
+        Set([2, 3]),
+        (1, "two"),
+        (a = 2, b = 2.0),
+    )
 
     rect = Rect(1, 1, 100, 30)
 
@@ -59,7 +75,7 @@
     expand_recursive!(root, 2)
     _drive(Explorer(; tree = ObjectTree(root)))
 
-    fields = root_node(sample(), "obj"; mode=Fields())
+    fields = root_node(sample(), "obj"; mode = Fields())
     expand_recursive!(fields, 1)
     _drive(Explorer(; tree = ObjectTree(fields)))
 
@@ -99,8 +115,12 @@
                 # rather than wedging the precompilation forever.
                 watchdog = Timer(_ -> (model.quit = true), 10)
                 try
-                    app(model; io = IOBuffer(), input = presses,
-                        tty_size = (rows = 30, cols = 100))
+                    app(
+                        model;
+                        io = IOBuffer(),
+                        input = presses,
+                        tty_size = (rows = 30, cols = 100),
+                    )
                 finally
                     close(watchdog)
                     close(presses)
@@ -113,7 +133,7 @@
     end
 
     # Elision, cycles, and the awkward leaf values.
-    long = root_node(collect(1:500), "v"; limit=20)
+    long = root_node(collect(1:500), "v"; limit = 20)
     toggle!(long)
     toggle!(last(long.children))
     for value in (nothing, missing, "text", :sym, 1:5, Int, [Ref(1)])

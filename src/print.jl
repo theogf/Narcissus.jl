@@ -33,16 +33,16 @@ function _printnode(io::IO, n::ObjNode)
     status = node_status(n)
     if status !== :none
         glyph, gstyle = status_marker(status)
-        glyph == ' ' || printstyled(io, glyph, ' '; color=_ansi(gstyle), bold=true)
+        glyph == ' ' || printstyled(io, glyph, ' '; color = _ansi(gstyle), bold = true)
     end
-    printstyled(io, n.key; color=_ansi(key_style(n)), bold=true)
+    printstyled(io, n.key; color = _ansi(key_style(n)), bold = true)
 
     ty = type_string(n)
-    isempty(ty) || printstyled(io, "::", ty; color=_ansi(tstyle(:secondary)))
+    isempty(ty) || printstyled(io, "::", ty; color = _ansi(tstyle(:secondary)))
 
     for (text, style) in preview_spans(n)
         isempty(text) && continue
-        printstyled(io, " ", text; color=_ansi(style))
+        printstyled(io, " ", text; color = _ansi(style))
     end
     nothing
 end
@@ -65,9 +65,15 @@ model::Model
    └─ [2]::Layer = Layer([0.5 0.1], [0.0])
 ```
 """
-function print_object(io::IO, @nospecialize(obj); name::AbstractString="obj",
-                      maxdepth::Int=3, limit::Int=20, mode=Semantic())
-    root = root_node(obj, name; limit, mode=exploration_mode(mode))
+function print_object(
+    io::IO,
+    @nospecialize(obj);
+    name::AbstractString = "obj",
+    maxdepth::Int = 3,
+    limit::Int = 20,
+    mode = Semantic(),
+)
+    root = root_node(obj, name; limit, mode = exploration_mode(mode))
     AbstractTrees.print_tree(_printnode, io, root; maxdepth)
     nothing
 end
@@ -95,17 +101,22 @@ before ⇄ after::Run
    └─ + [4]::Float64 1.02
 ```
 """
-function print_diff(io::IO, @nospecialize(x), @nospecialize(y);
-                    names::Tuple{AbstractString,AbstractString}=("left", "right"),
-                    maxdepth::Int=8, limit::Int=20, mode=Semantic(),
-                    all::Bool=false)
+function print_diff(
+    io::IO,
+    @nospecialize(x),
+    @nospecialize(y);
+    names::Tuple{AbstractString,AbstractString} = ("left", "right"),
+    maxdepth::Int = 8,
+    limit::Int = 20,
+    mode = Semantic(),
+    all::Bool = false,
+)
     lname, rname = String(names[1]), String(names[2])
-    root = root_node(Diff(x, y), lname; limit, mode=exploration_mode(mode))
+    root = root_node(Diff(x, y), lname; limit, mode = exploration_mode(mode))
     root.key = "$lname ⇄ $rname"
 
     if node_status(root) === :same && !all
-        printstyled(io, "The two objects are identical.\n";
-                    color=_ansi(tstyle(:success)))
+        printstyled(io, "The two objects are identical.\n"; color = _ansi(tstyle(:success)))
         return nothing
     end
 

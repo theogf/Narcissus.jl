@@ -52,7 +52,7 @@ Base.@kwdef mutable struct Explorer <: Model
     quit::Bool = false
     show_help::Bool = false
     searching::Bool = false
-    input::TextInput = TextInput(; label="/ ", focused=true)
+    input::TextInput = TextInput(; label = "/ ", focused = true)
     notice::String = ""
     notice_ttl::Int = 0
     names::Union{Nothing,Tuple{String,String}} = nothing
@@ -62,9 +62,8 @@ Base.@kwdef mutable struct Explorer <: Model
     in_flight::Set{Tuple{ObjNode,Symbol}} = Set{Tuple{ObjNode,Symbol}}()
     # Draggable split between the two panes. A comparison wants a wide tree
     # (two values per row); exploring one object wants a wide detail pane.
-    split::ResizableLayout = ResizableLayout(Horizontal,
-                                             Constraint[Percent(55), Fill(1)];
-                                             min_pane_size=12)
+    split::ResizableLayout =
+        ResizableLayout(Horizontal, Constraint[Percent(55), Fill(1)]; min_pane_size = 12)
 end
 
 "Whether this explorer is comparing two objects rather than exploring one."
@@ -186,8 +185,7 @@ function update!(m::Explorer, e::KeyEvent)
             outcome = search!(m.tree, m.tree.query, e.char == 'n' ? 1 : -1)
             m.revision += 1
             outcome === :none && notify!(m, "no match for \"$(m.tree.query)\"")
-            outcome === :revealed &&
-                notify!(m, "found in $(current_node(m.tree).path)")
+            outcome === :revealed && notify!(m, "found in $(current_node(m.tree).path)")
         end
     elseif e.key == :char && (e.char == 'a' || e.char == 'A')
         outcome = hunt_anomaly!(m.tree, e.char == 'a' ? 1 : -1)
@@ -198,8 +196,7 @@ function update!(m::Explorer, e::KeyEvent)
             notify!(m, "opened $(current_node(m.tree).path)")
         end
     elseif e.key == :char && e.char == 'M'
-        notify!(m, toggle_memory!(m.tree) ? "showing retained size" :
-                                            "showing values")
+        notify!(m, toggle_memory!(m.tree) ? "showing retained size" : "showing values")
     elseif e.key == :char && e.char == 'f'
         # One key, one meaning — "narrow this view" — and two things worth
         # narrowing: a comparison, and a module's jumble of bindings.
@@ -235,7 +232,7 @@ function update!(m::Explorer, e::KeyEvent)
     elseif e.key == :char && (e.char == 'y' || e.char == 'Y')
         node = current_node(m.tree)
         if node !== nothing
-            what = e.char == 'y' ? node.path : plain_show(node.value; width=100)
+            what = e.char == 'y' ? node.path : plain_show(node.value; width = 100)
             label = e.char == 'y' ? node.path : "value of $(node.path)"
             notify!(m, copy_to_clipboard(what) ? "copied $label" : clipboard_hint())
         end
@@ -276,8 +273,7 @@ function search_key!(m::Explorer, e::KeyEvent)
             outcome = search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1)
             m.revision += 1
             outcome === :none && notify!(m, "no match for \"$(m.tree.query)\"")
-            outcome === :revealed &&
-                notify!(m, "found in $(current_node(m.tree).path)")
+            outcome === :revealed && notify!(m, "found in $(current_node(m.tree).path)")
         end
     else
         handle_key!(m.input, e)
@@ -285,7 +281,7 @@ function search_key!(m::Explorer, e::KeyEvent)
         # Incremental: re-run from just before the cursor so the current row
         # stays put while it still matches.
         isempty(m.tree.query) ||
-            search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1, deep=false)
+            search!(m.tree, m.tree.query, 1; from = m.tree.selected - 1, deep = false)
     end
     nothing
 end
@@ -317,8 +313,7 @@ pane width or the object changes, and never merely because a frame was drawn.
 The `show` is also sized to the window you can see plus [`DETAIL_LOOKAHEAD`](@ref)
 lines; scrolling past that asks for a longer rendering, and only then.
 """
-function refresh_detail!(m::Explorer, node::Union{Nothing,ObjNode},
-                         width::Int, height::Int)
+function refresh_detail!(m::Explorer, node::Union{Nothing,ObjNode}, width::Int, height::Int)
     key = (node === nothing ? UInt(0) : objectid(node), width, m.revision)
     if key != m.detail_key
         m.detail_key = key
@@ -329,8 +324,9 @@ function refresh_detail!(m::Explorer, node::Union{Nothing,ObjNode},
     needed = m.detail_offset + height + DETAIL_LOOKAHEAD
     needed > m.detail_budget || return nothing
     m.detail_budget = needed
-    spans = node === nothing ? Span[] :
-            detail_spans(node, width; names=m.names, height=needed)
+    spans =
+        node === nothing ? Span[] :
+        detail_spans(node, width; names = m.names, height = needed)
     m.detail = wrap_spans(spans, max(1, width - 1))
     nothing
 end
@@ -347,11 +343,12 @@ function render_detail!(m::Explorer, area::Rect, buf::Buffer)
     m.detail_offset = clamp(m.detail_offset, 0, max(0, total - area.height))
 
     scrolling = total > area.height
-    text_area = scrolling && area.width > 1 ?
-        Rect(area.x, area.y, area.width - 1, area.height) : area
+    text_area =
+        scrolling && area.width > 1 ? Rect(area.x, area.y, area.width - 1, area.height) :
+        area
     max_x = right(text_area)
 
-    for i in 1:area.height
+    for i = 1:area.height
         idx = m.detail_offset + i
         idx > total && break
         cx = text_area.x
@@ -362,8 +359,11 @@ function render_detail!(m::Explorer, area::Rect, buf::Buffer)
         end
     end
 
-    scrolling && render(Scrollbar(total, area.height, m.detail_offset),
-                        Rect(right(area), area.y, 1, area.height), buf)
+    scrolling && render(
+        Scrollbar(total, area.height, m.detail_offset),
+        Rect(right(area), area.y, 1, area.height),
+        buf,
+    )
     nothing
 end
 
@@ -371,8 +371,9 @@ function view(m::Explorer, f::Frame)
     a = f.area
     (a.width < 8 || a.height < 4) && return nothing
 
-    heights = m.searching ? Constraint[Fill(1), Fixed(1), Fixed(1)] :
-                            Constraint[Fill(1), Fixed(1)]
+    heights =
+        m.searching ? Constraint[Fill(1), Fixed(1), Fixed(1)] :
+        Constraint[Fill(1), Fixed(1)]
     parts = split_layout(Layout(Vertical, heights), a)
     main, bar = parts[1], parts[end]
 
@@ -434,30 +435,54 @@ function status_bar(m::Explorer, width::Int)
 
     right = Span[]
     if m.notice_ttl > 0 && !isempty(m.notice)
-        push!(right, Span(truncate_text(m.notice, max(8, width ÷ 2)) * " ",
-                          tstyle(:success)))
+        push!(
+            right,
+            Span(truncate_text(m.notice, max(8, width ÷ 2)) * " ", tstyle(:success)),
+        )
     else
         node = current_node(m.tree)
         node === nothing ||
             push!(right, Span(truncate_text(node.path, max(8, width ÷ 2)) * " ", dim))
     end
-    budget = width - sum(textwidth(s.content) for s in right; init=0) - 1
+    budget = width - sum(textwidth(s.content) for s in right; init = 0) - 1
 
     left = Span[]
-    hints = comparing(m) ?
-        [("↑↓", "move"), ("d", "next diff"), ("f", "fold same"), ("e", "expand"),
-         ("/", "search"), ("m", "view"), ("y", "path"), ("?", "help"),
-         ("q", "quit")] :
-        [("↑↓", "move"), ("←→", "fold"), ("⏎", "toggle"), ("/", "search"),
-         ("a", "anomaly"), ("M", "memory"), ("m", "view"), ("y", "path"),
-         ("?", "help"), ("q", "quit")]
+    hints =
+        comparing(m) ?
+        [
+            ("↑↓", "move"),
+            ("d", "next diff"),
+            ("f", "fold same"),
+            ("e", "expand"),
+            ("/", "search"),
+            ("m", "view"),
+            ("y", "path"),
+            ("?", "help"),
+            ("q", "quit"),
+        ] :
+        [
+            ("↑↓", "move"),
+            ("←→", "fold"),
+            ("⏎", "toggle"),
+            ("/", "search"),
+            ("a", "anomaly"),
+            ("M", "memory"),
+            ("m", "view"),
+            ("y", "path"),
+            ("?", "help"),
+            ("q", "quit"),
+        ]
     # A module listing is a hundred names of four different kinds, and `f` is
     # the key that cuts it down — but only there, so it earns its place in the
     # bar only there. Third position, because hints are dropped from the right
     # and this one is the answer to what the screen is showing you.
-    comparing(m) || !in_module(m.tree) ||
-        insert!(hints, 3, ("f", m.tree.kinds === :all ? "filter" :
-                                kind_label(m.tree.kinds)))
+    comparing(m) ||
+        !in_module(m.tree) ||
+        insert!(
+            hints,
+            3,
+            ("f", m.tree.kinds === :all ? "filter" : kind_label(m.tree.kinds)),
+        )
     for (k, label) in hints
         cost = textwidth(k) + textwidth(label) + 2
         cost > budget && break
@@ -471,14 +496,19 @@ end
 function render_help(f::Frame, a::Rect)
     lines = count('\n', HELP_TEXT) + 3
     rect = center(a, min(a.width - 4, 74), min(a.height - 2, lines))
-    for y in rect.y:bottom(rect), x in rect.x:right(rect)
+    for y = rect.y:bottom(rect), x = rect.x:right(rect)
         set_char!(f.buffer, x, y, ' ', Style(; bg = theme().bg))
     end
-    p = Paragraph(HELP_TEXT;
-                  block = Block(; title = " keys ",
-                                title_right = " any key closes ",
-                                border_style = tstyle(:accent)),
-                  wrap = no_wrap, style = tstyle(:text))
+    p = Paragraph(
+        HELP_TEXT;
+        block = Block(;
+            title = " keys ",
+            title_right = " any key closes ",
+            border_style = tstyle(:accent),
+        ),
+        wrap = no_wrap,
+        style = tstyle(:text),
+    )
     render(p, rect, f.buffer)
     nothing
 end
@@ -544,10 +574,15 @@ julia> narcissus(rand(3, 3))
 julia> x = narcissus(model; name="model")   # `x` is the row you left the cursor on
 ```
 """
-function narcissus(@nospecialize(obj); name::AbstractString="obj",
-                   limit::Int=DEFAULT_LIMIT, expand::Int=1,
-                   mode=Semantic(), kwargs...)
-    root = root_node(obj, name; limit, mode=exploration_mode(mode))
+function narcissus(
+    @nospecialize(obj);
+    name::AbstractString = "obj",
+    limit::Int = DEFAULT_LIMIT,
+    expand::Int = 1,
+    mode = Semantic(),
+    kwargs...,
+)
+    root = root_node(obj, name; limit, mode = exploration_mode(mode))
     expand_recursive!(root, expand - 1)
     m = Explorer(; tree = ObjectTree(root))
     # A module opens onto a wall of names, and the key that cuts it down is the
@@ -584,12 +619,17 @@ A comparison bottoms out where the two sides stop lining up: values of
 differently named types are reported as a type change rather than zipped field
 by field. See [`Diff`](@ref) and [`diff_status`](@ref).
 """
-function narcissus(@nospecialize(x), @nospecialize(y);
-                   names::Tuple{AbstractString,AbstractString}=("left", "right"),
-                   limit::Int=DEFAULT_LIMIT, expand::Int=8,
-                   mode=Semantic(), kwargs...)
+function narcissus(
+    @nospecialize(x),
+    @nospecialize(y);
+    names::Tuple{AbstractString,AbstractString} = ("left", "right"),
+    limit::Int = DEFAULT_LIMIT,
+    expand::Int = 8,
+    mode = Semantic(),
+    kwargs...,
+)
     lname, rname = String(names[1]), String(names[2])
-    root = root_node(Diff(x, y), lname; limit, mode=exploration_mode(mode))
+    root = root_node(Diff(x, y), lname; limit, mode = exploration_mode(mode))
     root.key = "$lname ⇄ $rname"
     expand_differences!(root, expand - 1)
     m = Explorer(; tree = ObjectTree(root), names = (lname, rname))
@@ -633,16 +673,22 @@ macro narcissus(args...)
     named = Set(o isa Expr ? o.args[1] : o for o in options)
 
     if length(positional) == 1
-        :name in named ||
-            pushfirst!(options, Expr(:kw, :name, string(positional[1])))
-        return Expr(:call, :narcissus, Expr(:parameters, options...),
-                    esc(positional[1]))
+        :name in named || pushfirst!(options, Expr(:kw, :name, string(positional[1])))
+        return Expr(:call, :narcissus, Expr(:parameters, options...), esc(positional[1]))
     elseif length(positional) == 2
-        :names in named || pushfirst!(options, Expr(:kw, :names,
-            (string(positional[1]), string(positional[2]))))
-        return Expr(:call, :narcissus, Expr(:parameters, options...),
-                    esc(positional[1]), esc(positional[2]))
+        :names in named || pushfirst!(
+            options,
+            Expr(:kw, :names, (string(positional[1]), string(positional[2]))),
+        )
+        return Expr(
+            :call,
+            :narcissus,
+            Expr(:parameters, options...),
+            esc(positional[1]),
+            esc(positional[2]),
+        )
     end
-    return :(throw(ArgumentError(
-        "@narcissus takes one expression to explore, or two to compare")))
+    return :(throw(
+        ArgumentError("@narcissus takes one expression to explore, or two to compare"),
+    ))
 end

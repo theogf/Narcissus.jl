@@ -1,11 +1,20 @@
 @testsnippet AppHarness begin
     using Tachikoma
-    using Narcissus: Explorer, ObjectTree, root_node, current_node, selected_value,
-                     invalidate!, rows, node_text, search!, toggle!
+    using Narcissus:
+        Explorer,
+        ObjectTree,
+        root_node,
+        current_node,
+        selected_value,
+        invalidate!,
+        rows,
+        node_text,
+        search!,
+        toggle!
     import Tachikoma: view, update!
 
     "Render a model into a TestBackend so its screen can be inspected."
-    function draw(m, width::Int=90, height::Int=20)
+    function draw(m, width::Int = 90, height::Int = 20)
         rect = Rect(1, 1, width, height)
         buf = Buffer(rect)
         view(m, Frame(buf, rect, GraphicsRegion[], PixelSnapshot[]))
@@ -14,7 +23,7 @@
         tb
     end
 
-    screen(tb) = join((row_text(tb, y) for y in 1:tb.height), "\n")
+    screen(tb) = join((row_text(tb, y) for y = 1:tb.height), "\n")
 
     press!(m, k) = (update!(m, KeyEvent(k)); m)
 
@@ -22,8 +31,8 @@
     Draw until the model's background measurements have all landed, the way the
     app loop would over a few frames.
     """
-    function settle!(m, width=90, height=20; frames=200)
-        for _ in 1:frames
+    function settle!(m, width = 90, height = 20; frames = 200)
+        for _ = 1:frames
             # A draw both asks for work and dispatches it, capped — so the
             # signal that everything has landed is a draw that asks for nothing.
             draw(m, width, height)
@@ -47,7 +56,7 @@
 
     sample_run() = Run("exp-1", Config(0.01, [:fast, :noisy]), [3.0, 2.0, 1.0])
 
-    explorer(obj, name="run"; kwargs...) =
+    explorer(obj, name = "run"; kwargs...) =
         Explorer(; tree = ObjectTree(root_node(obj, name; kwargs...)))
 end
 
@@ -65,7 +74,8 @@ end
     m = explorer(sample_run())
     press!(m, :right)                      # expand the root
     @test length(rows(m.tree)) == 4
-    press!(m, :down); press!(m, :down)     # onto `config`
+    press!(m, :down)
+    press!(m, :down)     # onto `config`
     @test current_node(m.tree).key == "config"
     press!(m, :right)                      # into it
     press!(m, :down)
@@ -78,7 +88,10 @@ end
 
 @testitem "vim keys mirror the arrows" tags=[:unit] setup=[AppHarness] begin
     m = explorer(sample_run())
-    press!(m, 'l'); press!(m, 'j'); press!(m, 'j'); press!(m, 'l')
+    press!(m, 'l')
+    press!(m, 'j')
+    press!(m, 'j')
+    press!(m, 'l')
     @test current_node(m.tree).key == "config"
     @test current_node(m.tree).expanded
     press!(m, 'h')
@@ -108,7 +121,7 @@ end
 end
 
 @testitem "elided rows load the next window" tags=[:unit] setup=[AppHarness] begin
-    m = explorer(collect(1:250), "v"; limit=100)
+    m = explorer(collect(1:250), "v"; limit = 100)
     press!(m, :right)
     @test length(rows(m.tree)) == 102
     press!(m, 'G')                          # onto the `…` row
@@ -151,7 +164,8 @@ end
 @testitem "quitting returns the selected value" tags=[:unit] setup=[AppHarness] begin
     r = sample_run()
     m = explorer(r)
-    press!(m, :right); press!(m, :down)
+    press!(m, :right)
+    press!(m, :down)
     @test selected_value(m) == "exp-1"
     press!(m, 'q')
     @test Narcissus.should_quit(m)
@@ -160,7 +174,8 @@ end
 @testitem "reload picks up mutation" tags=[:unit] setup=[AppHarness] begin
     r = sample_run()
     m = explorer(r)
-    press!(m, :right); press!(m, :down)
+    press!(m, :right)
+    press!(m, :down)
     @test occursin("exp-1", node_text(current_node(m.tree)))
 
     r.name = "exp-2"
@@ -172,8 +187,7 @@ end
 @testitem "mouse clicks select and toggle" tags=[:unit] setup=[AppHarness] begin
     m = explorer(sample_run())
     draw(m)
-    click(x, y) = update!(m, MouseEvent(x, y, mouse_left, mouse_press,
-                                        false, false, false))
+    click(x, y) = update!(m, MouseEvent(x, y, mouse_left, mouse_press, false, false, false))
     click(4, 2)                              # the row already under the cursor
     @test m.tree.selected == 1
     @test m.tree.root.expanded               # ... so the click toggled it open
@@ -232,8 +246,7 @@ end
 end
 
 @testitem "comparison marks and navigates diffs" tags=[:unit] setup=[AppHarness] begin
-    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!,
-                     node_status
+    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!, node_status
 
     before = sample_run()
     after = sample_run()
@@ -253,7 +266,7 @@ end
     press!(m, 'd')
     @test node_status(current_node(m.tree)) !== :same
     seen = String[]
-    for _ in 1:4
+    for _ = 1:4
         press!(m, 'd')
         push!(seen, current_node(m.tree).path)
         @test node_status(current_node(m.tree)) !== :same
@@ -315,7 +328,7 @@ end
 
     r = sample_run()
     r.losses = [3.0, NaN, 1.0]
-    m = explorer((run=r, spare=Float64[]), "s")
+    m = explorer((run = r, spare = Float64[]), "s")
 
     press!(m, 'a')
     first_hit = current_node(m.tree).path
@@ -335,7 +348,7 @@ end
 end
 
 @testitem "M shows what each row costs" tags=[:unit] setup=[AppHarness] begin
-    m = explorer((small=[1, 2], big=rand(20_000)), "s")
+    m = explorer((small = [1, 2], big = rand(20_000)), "s")
     press!(m, :right)
 
     press!(m, 'M')
@@ -357,8 +370,7 @@ end
 end
 
 @testitem "f folds away what matched" tags=[:unit] setup=[AppHarness] begin
-    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!,
-                     node_status
+    using Narcissus: Diff, Explorer, ObjectTree, root_node, expand_differences!, node_status
 
     before = sample_run()
     after = sample_run()
@@ -422,17 +434,23 @@ end
     press!(m, 'f')
     @test m.tree.kinds === :function
     @test occursin("functions", m.notice)
-    @test all(r -> r.node.value isa Module || binding_kind(r.node.value) === :function,
-              rows(m.tree))
+    @test all(
+        r -> r.node.value isa Module || binding_kind(r.node.value) === :function,
+        rows(m.tree),
+    )
     @test length(rows(m.tree)) < everything
     @test occursin("functions only", screen(draw(m)))
 
     press!(m, 'f')
     @test m.tree.kinds === :type
-    @test all(r -> r.node.value isa Module || binding_kind(r.node.value) === :type,
-              rows(m.tree))
+    @test all(
+        r -> r.node.value isa Module || binding_kind(r.node.value) === :type,
+        rows(m.tree),
+    )
 
-    press!(m, 'f'); press!(m, 'f'); press!(m, 'f')
+    press!(m, 'f')
+    press!(m, 'f')
+    press!(m, 'f')
     @test m.tree.kinds === :all                     # back around
     @test length(rows(m.tree)) == everything
 end
@@ -455,7 +473,7 @@ end
 end
 
 @testitem "the memory column is right-aligned" tags=[:unit] setup=[AppHarness] begin
-    m = explorer((small=[1, 2], big=rand(20_000)), "s")
+    m = explorer((small = [1, 2], big = rand(20_000)), "s")
     press!(m, :right)
     press!(m, 'M')
     settle!(m, 100, 8)
@@ -463,7 +481,7 @@ end
     tb = draw(m, 100, 8)
     # Character positions, not byte offsets — the box-drawing characters around
     # the panes are multi-byte and would make aligned columns look ragged.
-    columns = [findlast(==('%'), collect(row_text(tb, y))) for y in 2:4]
+    columns = [findlast(==('%'), collect(row_text(tb, y))) for y = 2:4]
     @test all(!isnothing, columns)
     @test length(unique(columns)) == 1             # every % in the same column
 end
@@ -471,7 +489,7 @@ end
 @testitem "slow measurements happen off the main task" tags=[:unit] setup=[AppHarness] begin
     using Narcissus: bytes_state, anomaly_state, MAX_IN_FLIGHT
 
-    m = explorer((big=rand(200_000), also=rand(200_000), tag="x"), "s")
+    m = explorer((big = rand(200_000), also = rand(200_000), tag = "x"), "s")
     press!(m, :right)
     press!(m, 'M')
 
@@ -496,7 +514,7 @@ end
 
     losses = rand(200_000)
     losses[100_000] = NaN
-    m = explorer((losses=losses, fine=rand(200_000)), "s")
+    m = explorer((losses = losses, fine = rand(200_000)), "s")
     press!(m, :right)
 
     draw(m, 90, 10)

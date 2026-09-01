@@ -46,19 +46,46 @@ mutable struct ObjNode
     _bytes_capped::Bool               # measurement hit the budget
 end
 
-function ObjNode(key::AbstractString, value, path::AbstractString;
-                 kind::Symbol=:root, parent=nothing, index::Int=0,
-                 mode::ExplorationMode=Semantic(), limit::Int=DEFAULT_LIMIT)
-    ObjNode(String(key), kind, value, String(path), parent, ObjNode[],
-            false, false, expandable(mode, value), mode, index,
-            n_components(mode, value), 0, limit, nothing, nothing, nothing,
-            -1, false)
+function ObjNode(
+    key::AbstractString,
+    value,
+    path::AbstractString;
+    kind::Symbol = :root,
+    parent = nothing,
+    index::Int = 0,
+    mode::ExplorationMode = Semantic(),
+    limit::Int = DEFAULT_LIMIT,
+)
+    ObjNode(
+        String(key),
+        kind,
+        value,
+        String(path),
+        parent,
+        ObjNode[],
+        false,
+        false,
+        expandable(mode, value),
+        mode,
+        index,
+        n_components(mode, value),
+        0,
+        limit,
+        nothing,
+        nothing,
+        nothing,
+        -1,
+        false,
+    )
 end
 
 "Root node for `value`, displayed and path-rooted as `name`."
-root_node(value, name::AbstractString="obj"; limit::Int=DEFAULT_LIMIT,
-          mode::ExplorationMode=Semantic()) =
-    ObjNode(name, value, name; kind=:root, mode, limit)
+root_node(
+    value,
+    name::AbstractString = "obj";
+    limit::Int = DEFAULT_LIMIT,
+    mode::ExplorationMode = Semantic(),
+) = ObjNode(name, value, name; kind = :root, mode, limit)
 
 # ── Cycles ───────────────────────────────────────────────────────────
 
@@ -78,7 +105,8 @@ function is_ancestor_value(parent::Union{Nothing,ObjNode}, @nospecialize(v))
         if p.kind !== :elided
             pkeys = identity_keys(p.value)
             length(pkeys) == length(keys) &&
-                any(i -> _ident(pkeys[i], keys[i]), eachindex(keys)) && return true
+                any(i -> _ident(pkeys[i], keys[i]), eachindex(keys)) &&
+                return true
         end
         p = p.parent
     end
@@ -97,18 +125,32 @@ function make_node(c::Component, parent::ObjNode, index::Int)
     path = replace(c.template, "{}" => parent.path)
     mode = parent.mode
     if is_ancestor_value(parent, c.value)
-        n = ObjNode(c.key, c.value, path; kind=:cycle, parent, index, mode,
-                    limit=parent.limit)
+        n = ObjNode(
+            c.key,
+            c.value,
+            path;
+            kind = :cycle,
+            parent,
+            index,
+            mode,
+            limit = parent.limit,
+        )
         n.expandable = false
         return n
     end
-    ObjNode(c.key, c.value, path; kind=c.kind, parent, index, mode,
-            limit=parent.limit)
+    ObjNode(c.key, c.value, path; kind = c.kind, parent, index, mode, limit = parent.limit)
 end
 
 function elided_node(parent::ObjNode, next_start::Int)
-    n = ObjNode("…", parent.value, parent.path; kind=:elided, parent,
-                mode=parent.mode, limit=parent.limit)
+    n = ObjNode(
+        "…",
+        parent.value,
+        parent.path;
+        kind = :elided,
+        parent,
+        mode = parent.mode,
+        limit = parent.limit,
+    )
     n.next_start = next_start
     n.total = parent.total
     n.expandable = true
@@ -372,7 +414,7 @@ container is untouched: a hidden subtree is simply never walked.
   only under modules — elsewhere a listing of one kind is not a question anyone
   is asking.
 """
-function flatten(root::ObjNode; hide_same::Bool=false, kinds::Symbol=:all)
+function flatten(root::ObjNode; hide_same::Bool = false, kinds::Symbol = :all)
     rows = Row[]
     _flatten!(rows, root, 0, true, Bool[], hide_same, kinds)
     rows
@@ -384,7 +426,8 @@ function _flatten!(rows, n::ObjNode, depth, is_last, parent_lasts, hide_same, ki
 
     kids = n.children
     hide_same && (kids = filter(c -> node_status(c) !== :same, kids))
-    kinds === :all || !(n.value isa Module) ||
+    kinds === :all ||
+        !(n.value isa Module) ||
         (kids = filter(c -> binding_kind(c.value) === kinds, kids))
 
     lasts = vcat(parent_lasts, is_last)
@@ -410,14 +453,18 @@ The tail of a truncated container is searched as well — the elements behind a
 `… N more` marker are as much part of the object as the first hundred — but
 through [`find_in_tail`](@ref), which does not pull them into the tree.
 """
-function find_node(root::ObjNode, predicate; budget::Ref{Int}=Ref(SEARCH_BUDGET),
-                   maxdepth::Int=32, skip::Union{Nothing,ObjNode}=nothing)
+function find_node(
+    root::ObjNode,
+    predicate;
+    budget::Ref{Int} = Ref(SEARCH_BUDGET),
+    maxdepth::Int = 32,
+    skip::Union{Nothing,ObjNode} = nothing,
+)
     (budget[] -= 1) < 0 && return nothing
     maxdepth < 0 && return nothing
     root !== skip && predicate(root) && return root
     root.expandable || return nothing
-    root.kind === :elided &&
-        return find_in_tail(root, predicate; budget, maxdepth, skip)
+    root.kind === :elided && return find_in_tail(root, predicate; budget, maxdepth, skip)
     load_children!(root)
     for c in root.children
         found = find_node(c, predicate; budget, maxdepth = maxdepth - 1, skip)
@@ -444,8 +491,13 @@ The elements are read in `limit`-sized windows and every candidate costs a
 node of the shared `budget`, so a search over a million-element array stops
 where any other search stops.
 """
-function find_in_tail(marker::ObjNode, predicate; budget::Ref{Int},
-                      maxdepth::Int, skip::Union{Nothing,ObjNode})
+function find_in_tail(
+    marker::ObjNode,
+    predicate;
+    budget::Ref{Int},
+    maxdepth::Int,
+    skip::Union{Nothing,ObjNode},
+)
     parent = marker.parent
     parent === nothing && return nothing
     start = marker.next_start
@@ -465,10 +517,14 @@ function find_in_tail(marker::ObjNode, predicate; budget::Ref{Int},
 end
 
 "Load a truncated container up to `index`, and find the match inside it again."
-function realise_child!(parent::ObjNode, index::Int, predicate, maxdepth::Int,
-                        skip::Union{Nothing,ObjNode})
-    while index > length(parent.children) ||
-          parent.children[index].kind === :elided
+function realise_child!(
+    parent::ObjNode,
+    index::Int,
+    predicate,
+    maxdepth::Int,
+    skip::Union{Nothing,ObjNode},
+)
+    while index > length(parent.children) || parent.children[index].kind === :elided
         tail = last(parent.children)
         tail.kind === :elided || break
         expand_elided!(tail)
@@ -476,8 +532,13 @@ function realise_child!(parent::ObjNode, index::Int, predicate, maxdepth::Int,
     index <= length(parent.children) || return nothing
     # A fresh budget: this walk covers ground already paid for, and running out
     # of it here would report "no match" for something just found.
-    find_node(parent.children[index], predicate;
-              budget = Ref(SEARCH_BUDGET), maxdepth, skip)
+    find_node(
+        parent.children[index],
+        predicate;
+        budget = Ref(SEARCH_BUDGET),
+        maxdepth,
+        skip,
+    )
 end
 
 """

@@ -79,16 +79,18 @@ end
 # Only worth scanning when an element could plausibly be one of the values we
 # are looking for — a Vector{String} has nothing to say here.
 _scannable(::Type{T}) where {T} =
-    T <: AbstractFloat || T <: Missing || T === Any ||
+    T <: AbstractFloat ||
+    T <: Missing ||
+    T === Any ||
     (T isa Union && (_scannable(T.a) || _scannable(T.b)))
 
 "Row glyph and style for an anomaly; `nothing` draws nothing."
 function anomaly_marker(kind::Union{Nothing,Symbol})
-    kind === :nan && return ('!', tstyle(:error, bold=true))
-    kind === :inf && return ('!', tstyle(:error, bold=true))
-    kind === :missing && return ('?', tstyle(:warning, bold=true))
-    kind === :undef && return ('?', tstyle(:warning, bold=true))
-    kind === :error && return ('!', tstyle(:error, bold=true))
+    kind === :nan && return ('!', tstyle(:error, bold = true))
+    kind === :inf && return ('!', tstyle(:error, bold = true))
+    kind === :missing && return ('?', tstyle(:warning, bold = true))
+    kind === :undef && return ('?', tstyle(:warning, bold = true))
+    kind === :error && return ('!', tstyle(:error, bold = true))
     kind === :empty && return ('∅', tstyle(:text_dim))
     (' ', tstyle(:text))
 end
@@ -118,8 +120,12 @@ twenty times over, which is enough to hang or exhaust a session — and the
 answer was never a fact about anyone's data.
 """
 skip_for_size(@nospecialize(x)) =
-    x isa Module || x isa Type || x isa Method || x isa Core.MethodInstance ||
-    x isa Core.TypeName || x isa Core.SimpleVector
+    x isa Module ||
+    x isa Type ||
+    x isa Method ||
+    x isa Core.MethodInstance ||
+    x isa Core.TypeName ||
+    x isa Core.SimpleVector
 
 """
     bounded_size(x; budget=SIZE_BUDGET) -> (bytes, truncated)
@@ -134,7 +140,7 @@ view cannot be made to hang the app by pointing it at the wrong row. When the
 budget runs out the result is reported as a lower bound rather than a number
 pretending to be exact.
 """
-function bounded_size(@nospecialize(x); budget::Int=SIZE_BUDGET)
+function bounded_size(@nospecialize(x); budget::Int = SIZE_BUDGET)
     seen = Base.IdSet{Any}()
     left = Ref(budget)
     bytes = _measure(x, seen, left)
@@ -160,7 +166,7 @@ function _measure(@nospecialize(v), seen::Base.IdSet, left::Ref{Int})
                 total += _measure(v[i], seen, left)
             end
         elseif !(v isa AbstractString || v isa Symbol)
-            for i in 1:nfields(v)
+            for i = 1:nfields(v)
                 left[] <= 0 && break
                 isdefined(v, i) || continue
                 total += _measure(getfield(v, i), seen, left)
@@ -173,11 +179,12 @@ function _measure(@nospecialize(v), seen::Base.IdSet, left::Ref{Int})
 end
 
 "The object's own storage, before anything it points at."
-_shallow_size(@nospecialize(v)) = try
-    (v isa AbstractArray || v isa AbstractString) ? sizeof(v) : sizeof(typeof(v))
-catch
-    0
-end
+_shallow_size(@nospecialize(v)) =
+    try
+        (v isa AbstractArray || v isa AbstractString) ? sizeof(v) : sizeof(typeof(v))
+    catch
+        0
+    end
 
 """
     byte_size(x) -> Int
@@ -200,7 +207,7 @@ function human_bytes(n::Integer)
         if x < 1024 || i == length(units)
             # One decimal only while it buys precision, so the column never
             # grows past "1023 KiB" and the numbers stay aligned.
-            digits = x < 10 ? string(round(x; digits=1)) : string(round(Int, x))
+            digits = x < 10 ? string(round(x; digits = 1)) : string(round(Int, x))
             return string(digits, " ", u)
         end
         x /= 1024
@@ -209,7 +216,7 @@ function human_bytes(n::Integer)
 end
 
 "A proportion as a short unicode bar, for eyeballing where the bytes went."
-function share_bar(fraction::Real, width::Int=8)
+function share_bar(fraction::Real, width::Int = 8)
     fraction = clamp(fraction, 0.0, 1.0)
     filled = round(Int, fraction * width)
     "▕" * "█"^filled * "·"^(width - filled) * "▏"
@@ -244,13 +251,17 @@ headers, emphasis, lists and code blocks come out formatted rather than as raw
 `color=false` suppresses the Markdown writer's own colouring; syntax
 highlighting inside code blocks comes from Julia and stays either way.
 """
-function docstring(@nospecialize(x); width::Int=80, color::Bool=true)
+function docstring(@nospecialize(x); width::Int = 80, color::Bool = true)
     binding = doc_binding(x)
     binding === nothing && return nothing
     try
         io = IOBuffer()
-        context = IOContext(io, :color => color, :limit => true,
-                            :displaysize => (40, max(20, width)))
+        context = IOContext(
+            io,
+            :color => color,
+            :limit => true,
+            :displaysize => (40, max(20, width)),
+        )
         show(context, MIME"text/plain"(), Base.Docs.doc(binding, doc_signature(x)))
         text = String(take!(io))
         plain = strip_ansi(text)
@@ -284,8 +295,8 @@ end
 function doc_binding(m::Method)
     try
         ftype = Base.unwrap_unionall(m.sig).parameters[1]
-        isdefined(ftype, :instance) ?
-            doc_binding(ftype.instance) : Base.Docs.Binding(m.module, m.name)
+        isdefined(ftype, :instance) ? doc_binding(ftype.instance) :
+        Base.Docs.Binding(m.module, m.name)
     catch
         nothing
     end
@@ -323,7 +334,7 @@ function has_method_doc(m::Method)
     try
         sig = doc_signature(m)
         for mod in Base.Docs.modules
-            table = Base.Docs.meta(mod; autoinit=false)
+            table = Base.Docs.meta(mod; autoinit = false)
             table === nothing && continue
             multidoc = get(table, binding, nothing)
             multidoc === nothing && continue
@@ -366,7 +377,7 @@ function copy_to_clipboard(text::AbstractString)
     for command in CLIPBOARD_COMMANDS
         Sys.which(first(command)) === nothing && continue
         try
-            open(pipeline(command; stderr=devnull), "w") do io
+            open(pipeline(command; stderr = devnull), "w") do io
                 write(io, text)
             end
             return true
@@ -378,5 +389,7 @@ function copy_to_clipboard(text::AbstractString)
 end
 
 "Name the tools that could have taken the text, for a useful failure message."
-clipboard_hint() = "no clipboard tool found (tried " *
-                   join((first(c) for c in CLIPBOARD_COMMANDS), ", ") * ")"
+clipboard_hint() =
+    "no clipboard tool found (tried " *
+    join((first(c) for c in CLIPBOARD_COMMANDS), ", ") *
+    ")"

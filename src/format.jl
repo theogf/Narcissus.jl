@@ -10,11 +10,12 @@ function truncate_text(s::AbstractString, n::Int)
 end
 
 "Render a thrown value — which need not be an `Exception` — as text."
-err_string(e) = try
-    sprint(showerror, e)
-catch
-    string(e)
-end
+err_string(e) =
+    try
+        sprint(showerror, e)
+    catch
+        string(e)
+    end
 
 "Collapse a multi-line rendering onto a single line."
 squash(s::AbstractString) = replace(strip(s), r"\s*\n\s*" => " ")
@@ -26,11 +27,16 @@ squash(s::AbstractString) = replace(strip(s), r"\s*\n\s*" => " ")
 Never throws: a broken `show` method becomes a visible marker instead of a
 crashed explorer.
 """
-function compact_show(@nospecialize(v); width::Int=60, height::Int=2)
+function compact_show(@nospecialize(v); width::Int = 60, height::Int = 2)
     try
         io = IOBuffer()
-        ctx = IOContext(io, :compact => true, :limit => true, :color => false,
-                        :displaysize => (height, max(20, width + 8)))
+        ctx = IOContext(
+            io,
+            :compact => true,
+            :limit => true,
+            :color => false,
+            :displaysize => (height, max(20, width + 8)),
+        )
         show(ctx, v)
         return truncate_text(squash(String(take!(io))), width)
     catch e
@@ -49,11 +55,15 @@ handful of rows that fit rather than a million.
 [`refresh_detail!`](@ref), which asks for the visible window plus a little,
 and asks again for more only when you scroll past it.
 """
-function plain_show(@nospecialize(v); width::Int=80, height::Int=200)
+function plain_show(@nospecialize(v); width::Int = 80, height::Int = 200)
     try
         io = IOBuffer()
-        ctx = IOContext(io, :limit => true, :color => false,
-                        :displaysize => (max(4, height), max(20, width)))
+        ctx = IOContext(
+            io,
+            :limit => true,
+            :color => false,
+            :displaysize => (max(4, height), max(20, width)),
+        )
         show(ctx, MIME"text/plain"(), v)
         return String(take!(io))
     catch e
@@ -110,7 +120,7 @@ function _diff_preview(d::Diff, status::Symbol)
     status === :same && return compact_show(d.x)
     status === :added && return compact_show(d.y)
     status === :removed && return compact_show(d.x)
-    compact_show(d.x; width=28) * " → " * compact_show(d.y; width=28)
+    compact_show(d.x; width = 28) * " → " * compact_show(d.y; width = 28)
 end
 
 """
@@ -120,7 +130,7 @@ The value column of a tree row, split into styled pieces. Ordinary values are
 one piece; a comparison is the left side, an arrow, and the right side, so the
 two are told apart by colour and not just by reading order.
 """
-function preview_spans(n::ObjNode, selected::Bool=false)
+function preview_spans(n::ObjNode, selected::Bool = false)
     pv = preview(n)
     isempty(pv) && return Tuple{String,Style}[]
     plain = selected ? tstyle(:text_bright) : tstyle(:text)
@@ -134,9 +144,11 @@ function preview_spans(n::ObjNode, selected::Bool=false)
     status === :same && return [(pv, tstyle(:text_dim))]
     status === :added && return [(pv, tstyle(:warning))]
     status === :removed && return [(pv, tstyle(:primary))]
-    [(compact_show(d.x; width=28), tstyle(:primary)),
-     (" → ", tstyle(:border, dim=true)),
-     (compact_show(d.y; width=28), tstyle(:warning))]
+    [
+        (compact_show(d.x; width = 28), tstyle(:primary)),
+        (" → ", tstyle(:border, dim = true)),
+        (compact_show(d.y; width = 28), tstyle(:warning)),
+    ]
 end
 
 """
@@ -150,25 +162,29 @@ colour, answered the same way everywhere the status appears. The glyph says
 for "added" and making green mean two different things.
 """
 function status_marker(status::Symbol)
-    status === :same && return ('·', tstyle(:success, bold=true))
-    status === :changed && return ('~', tstyle(:error, bold=true))
-    status === :added && return ('+', tstyle(:error, bold=true))
-    status === :removed && return ('-', tstyle(:error, bold=true))
-    status === :type && return ('!', tstyle(:error, bold=true))
+    status === :same && return ('·', tstyle(:success, bold = true))
+    status === :changed && return ('~', tstyle(:error, bold = true))
+    status === :added && return ('+', tstyle(:error, bold = true))
+    status === :removed && return ('-', tstyle(:error, bold = true))
+    status === :type && return ('!', tstyle(:error, bold = true))
     (' ', tstyle(:text))
 end
 
 "Green when the two sides match, red when they do not."
 status_style(status::Symbol) =
-    status === :same ? tstyle(:success, bold=true) : tstyle(:error, bold=true)
+    status === :same ? tstyle(:success, bold = true) : tstyle(:error, bold = true)
 
 # ── Detail pane ──────────────────────────────────────────────────────
 
 _dim() = tstyle(:text_dim)
 _lbl() = tstyle(:text_dim)
 
-function _row!(spans, label::AbstractString, value::AbstractString,
-               style::Style=tstyle(:text))
+function _row!(
+    spans,
+    label::AbstractString,
+    value::AbstractString,
+    style::Style = tstyle(:text),
+)
     isempty(value) && return spans
     push!(spans, Span(rpad(label, 9), _lbl()))
     push!(spans, Span(value, style))
@@ -177,11 +193,12 @@ function _row!(spans, label::AbstractString, value::AbstractString,
 end
 
 "`supertype`, or an empty string for the types that do not have one."
-_supertype_string(@nospecialize(T::Type)) = try
-    string(supertype(T))
-catch
-    ""
-end
+_supertype_string(@nospecialize(T::Type)) =
+    try
+        string(supertype(T))
+    catch
+        ""
+    end
 
 "Human-readable description of what kind of thing a value is."
 function kind_string(@nospecialize(v))
@@ -214,7 +231,7 @@ end
 
 The right-hand pane: where the value lives, what it is, and how it prints.
 """
-function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
+function detail_spans(n::ObjNode, width::Int; names = nothing, height::Int = 60)
     n.value isa Diff && return diff_detail_spans(n, width, height, names)
     spans = Span[]
     v = n.value
@@ -223,14 +240,22 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
     _row!(spans, "type", type_string(n), tstyle(:secondary))
     _row!(spans, "kind", kind_string(v), tstyle(:text))
     if has_semantic_view(v)
-        _row!(spans, "view",
-              "$(mode_name(n.mode))  (m: $(mode_name(other_mode(n.mode))))",
-              tstyle(:warning))
+        _row!(
+            spans,
+            "view",
+            "$(mode_name(n.mode))  (m: $(mode_name(other_mode(n.mode))))",
+            tstyle(:warning),
+        )
     end
 
     if n.kind === :elided
-        _row!(spans, "elided", "showing $(n.next_start - 1) of $(n.total); " *
-                               "press Enter to load $(n.limit) more", tstyle(:warning))
+        _row!(
+            spans,
+            "elided",
+            "showing $(n.next_start - 1) of $(n.total); " *
+            "press Enter to load $(n.limit) more",
+            tstyle(:warning),
+        )
         return spans
     end
     if n.kind === :cycle
@@ -242,14 +267,19 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
     if v isa Module
         _row!(spans, "parent", string(parentmodule(v)), tstyle(:text))
         _row!(spans, "public", string(length(module_names(v))), tstyle(:text))
-        _row!(spans, "all", string(length(module_names(v; all=true))), _dim())
-        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
-                          tstyle(:border, dim=true)))
-        push!(spans, Span("Semantic view lists what the module offers; the field "
-                          * "view lists everything it defines. Press f to keep "
-                          * "only the functions, the types, the modules or the "
-                          * "values.\n\n", _dim()))
-        _docs!(spans, v, width; separator=false)
+        _row!(spans, "all", string(length(module_names(v; all = true))), _dim())
+        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim = true)))
+        push!(
+            spans,
+            Span(
+                "Semantic view lists what the module offers; the field " *
+                "view lists everything it defines. Press f to keep " *
+                "only the functions, the types, the modules or the " *
+                "values.\n\n",
+                _dim(),
+            ),
+        )
+        _docs!(spans, v, width; separator = false)
         return spans
     elseif v isa Type
         # `supertype` is a `DataType` question: a `UnionAll` or a `Union` has
@@ -258,15 +288,13 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
         _row!(spans, "fields", string(n_components(n.mode, v)), tstyle(:text))
         _row!(spans, "abstract", string(isabstracttype(v)), _dim())
         _row!(spans, "isbits", string(isbitstype(v)), _dim())
-        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
-                          tstyle(:border, dim=true)))
-        for i in 1:n_components(n.mode, v)
+        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim = true)))
+        for i = 1:n_components(n.mode, v)
             # A tuple type's field "names" are integers, not symbols.
             name = fieldname(v, i)
             label = name isa Integer ? "[$name]" : String(name)
             push!(spans, Span("  " * label, tstyle(:primary)))
-            push!(spans, Span("::" * string(fieldtype(v, i)) * "\n",
-                              tstyle(:secondary)))
+            push!(spans, Span("::" * string(fieldtype(v, i)) * "\n", tstyle(:secondary)))
         end
         _docs!(spans, v, width)
         return spans
@@ -314,7 +342,7 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
     end
 
     # One column short of the pane: the paragraph keeps a column for its scrollbar.
-    push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim=true)))
+    push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim = true)))
 
     if v isa Undef
         push!(spans, Span("This field is declared but never assigned.\n", tstyle(:warning)))
@@ -341,7 +369,7 @@ function rename_root(path::AbstractString, names)
     names === nothing && return String(path)
     left, right = names
     startswith(path, left) || return String(path)
-    right * path[(ncodeunits(left) + 1):end]
+    right * path[(ncodeunits(left)+1):end]
 end
 
 """
@@ -357,19 +385,24 @@ function diff_detail_spans(n::ObjNode, width::Int, height::Int, names)
     spans = Span[]
     lname, rname = names === nothing ? ("left", "right") : names
 
-    _row!(spans, "status", get(STATUS_TEXT, status, string(status)),
-          status_style(status))
+    _row!(spans, "status", get(STATUS_TEXT, status, string(status)), status_style(status))
     if status === :type
-        _row!(spans, "types", string(typeof(d.x)) * "  ≠  " * string(typeof(d.y)),
-              tstyle(:error))
+        _row!(
+            spans,
+            "types",
+            string(typeof(d.x)) * "  ≠  " * string(typeof(d.y)),
+            tstyle(:error),
+        )
     end
     _row!(spans, lname, d.x isa Absent ? "—" : n.path, tstyle(:primary))
-    _row!(spans, rname, d.y isa Absent ? "—" : rename_root(n.path, names),
-          tstyle(:warning))
+    _row!(spans, rname, d.y isa Absent ? "—" : rename_root(n.path, names), tstyle(:warning))
     if has_semantic_view(d)
-        _row!(spans, "view",
-              "$(mode_name(n.mode))  (m: $(mode_name(other_mode(n.mode))))",
-              tstyle(:text))
+        _row!(
+            spans,
+            "view",
+            "$(mode_name(n.mode))  (m: $(mode_name(other_mode(n.mode))))",
+            tstyle(:text),
+        )
     end
     _row!(spans, "parts", string(n_components(n.mode, d)), tstyle(:text))
 
@@ -381,11 +414,19 @@ function diff_detail_spans(n::ObjNode, width::Int, height::Int, names)
     spans
 end
 
-function _side!(spans, label::AbstractString, @nospecialize(v), style::Style,
-                width::Int, height::Int)
+function _side!(
+    spans,
+    label::AbstractString,
+    @nospecialize(v),
+    style::Style,
+    width::Int,
+    height::Int,
+)
     push!(spans, Span("─── $label ", style))
-    push!(spans, Span("─"^max(1, width - textwidth(label) - 6) * "\n",
-                      tstyle(:border, dim=true)))
+    push!(
+        spans,
+        Span("─"^max(1, width - textwidth(label) - 6) * "\n", tstyle(:border, dim = true)),
+    )
     if v isa Absent
         push!(spans, Span("(absent)\n\n", tstyle(:text_dim)))
         return spans
@@ -415,7 +456,7 @@ large, but the proportion tells you whether it is the reason its parent is.
 Rendered as a right-aligned block of [`MEMORY_COLUMN_WIDTH`](@ref) cells so
 that sibling rows can be compared down the column rather than read one by one.
 """
-function memory_spans(n::ObjNode, tree=nothing)
+function memory_spans(n::ObjNode, tree = nothing)
     # Runtime machinery declines to be measured; say so rather than claim "0 B".
     skip_for_size(node_measurand(n)) && return [(lpad("—", 9), tstyle(:text_dim))]
 
@@ -429,17 +470,19 @@ function memory_spans(n::ObjNode, tree=nothing)
     bytes_state(n) < 0 && return [(lpad("…", 9), tstyle(:text_dim))]
 
     bytes = node_bytes(n)
-    parent_bytes = parent === nothing || bytes_state(parent) < 0 ? bytes :
-                   node_bytes(parent)
+    parent_bytes =
+        parent === nothing || bytes_state(parent) < 0 ? bytes : node_bytes(parent)
     share = parent_bytes > 0 ? bytes / parent_bytes : 1.0
 
-    heavy = share > 0.5 ? tstyle(:warning, bold=true) : tstyle(:text)
+    heavy = share > 0.5 ? tstyle(:warning, bold = true) : tstyle(:text)
     # A capped measurement is a lower bound, and says so rather than rounding
     # a number it never finished computing.
     shown = n._bytes_capped ? ">" * human_bytes(bytes) : human_bytes(bytes)
-    [(lpad(shown, 9), heavy),
-     (" " * share_bar(share), tstyle(:text_dim)),
-     (lpad(string(round(Int, 100share), "%"), 5), tstyle(:text_dim))]
+    [
+        (lpad(shown, 9), heavy),
+        (" " * share_bar(share), tstyle(:text_dim)),
+        (lpad(string(round(Int, 100share), "%"), 5), tstyle(:text_dim)),
+    ]
 end
 
 """
@@ -452,17 +495,20 @@ output — it is what the thing is *for*. The Markdown comes back as ANSI, which
 `parse_ansi` splits into styled spans, so the pane shows headers, emphasis and
 code blocks rather than a wall of asterisks.
 """
-function _docs!(spans, @nospecialize(v), width::Int; separator::Bool=true)
-    separator && push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
-                                   tstyle(:border, dim=true)))
+function _docs!(spans, @nospecialize(v), width::Int; separator::Bool = true)
+    separator &&
+        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim = true)))
     text = docstring(v; width = max(20, width - 1))
     text === nothing && return push!(spans, Span("(no documentation)\n", _dim()))
     # A method with no docstring of its own falls back to everything written
     # about the function, which is worth showing and worth labelling — the
     # alternative is a page of prose that looks like it describes this method.
-    v isa Method && !has_method_doc(v) &&
-        push!(spans, Span("(nothing on this method — the function's documentation)\n\n",
-                          _dim()))
+    v isa Method &&
+        !has_method_doc(v) &&
+        push!(
+            spans,
+            Span("(nothing on this method — the function's documentation)\n\n", _dim()),
+        )
     append!(spans, parse_ansi(text))
     spans
 end
@@ -496,7 +542,7 @@ function wrap_spans(spans::Vector{Span}, width::Int)
     end
 
     for span in spans
-        for (i, part) in enumerate(split(span.content, '\n'; keepempty=true))
+        for (i, part) in enumerate(split(span.content, '\n'; keepempty = true))
             i > 1 && newline!()
             isempty(part) && continue
             for token in _tokens(part)
@@ -509,7 +555,7 @@ function wrap_spans(spans::Vector{Span}, width::Int)
                         room <= 0 && (newline!(); room = width)
                         take = min(room, length(chars))
                         emit!(String(chars[1:take]), span.style)
-                        chars = chars[(take + 1):end]
+                        chars = chars[(take+1):end]
                     end
                 elseif col[] + w > width
                     # A wrapped line never starts with the space that broke it.
@@ -536,7 +582,7 @@ function _tokens(s::AbstractString)
         while j <= length(chars) && isspace(chars[j]) == spacey
             j += 1
         end
-        push!(out, String(chars[i:(j - 1)]))
+        push!(out, String(chars[i:(j-1)]))
         i = j
     end
     out
