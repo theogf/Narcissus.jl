@@ -119,7 +119,7 @@ struct Component
     kind::Symbol
 end
 
-Component(key::AbstractString, template::AbstractString, value; kind::Symbol=:index) =
+Component(key::AbstractString, template::AbstractString, value; kind::Symbol = :index) =
     Component(String(key), String(template), value, kind)
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -290,8 +290,7 @@ component_count(::Fields, @nospecialize(x)) = fieldcount(typeof(x))
 
 # A tuple's "field names" are integers, so it needs its own field view — which
 # happens to be identical to its semantic one.
-components(::Fields, x::Tuple) =
-    (Component("[$i]", "{}[$i]", x[i]) for i in 1:length(x))
+components(::Fields, x::Tuple) = (Component("[$i]", "{}[$i]", x[i]) for i in eachindex(x))
 component_count(::Fields, x::Tuple) = length(x)
 
 # ── Types: a map of an unfamiliar package ────────────────────────────
@@ -305,25 +304,26 @@ has_semantic_view(::Type) = false
 # `fieldcount` throws on anything without a definite layout — abstract types,
 # `UnionAll`s, `Union`s — which is exactly the case where there is nothing to
 # show anyway.
-_type_count(@nospecialize(T::Type)) = try
-    fieldcount(T)
-catch
-    0
-end
+_type_count(@nospecialize(T::Type)) =
+    try
+        fieldcount(T)
+    catch
+        0
+    end
 
 function _type_components(@nospecialize(T::Type))
     n = _type_count(T)
     n == 0 && return Component[]
     names = fieldnames(T)
-    (_type_component(T, i, names[i]) for i in 1:n)
+    (_type_component(T, i, names[i]) for i = 1:n)
 end
 
 _type_component(@nospecialize(T::Type), i::Int, name::Symbol) =
-    Component(String(name), "fieldtype({}, :$name)", fieldtype(T, i); kind=:field)
+    Component(String(name), "fieldtype({}, :$name)", fieldtype(T, i); kind = :field)
 
 # A tuple type's field "names" are integers.
 _type_component(@nospecialize(T::Type), i::Int, ::Integer) =
-    Component("[$i]", "fieldtype({}, $i)", fieldtype(T, i); kind=:index)
+    Component("[$i]", "fieldtype({}, $i)", fieldtype(T, i); kind = :index)
 
 # ── Modules: what a package contains ─────────────────────────────────
 
@@ -342,11 +342,11 @@ The module's own name is dropped — every module exports itself, and a row that
 leads straight back to where you are is noise. Memoised; [`forget_modules!`](@ref)
 clears the memo.
 """
-function module_names(m::Module; all::Bool=false)
+function module_names(m::Module; all::Bool = false)
     get!(_MODULE_NAMES, (m, all)) do
         me = nameof(m)
         found = try
-            names(m; all, imported=all)
+            names(m; all, imported = all)
         catch
             Symbol[]
         end
@@ -372,8 +372,8 @@ end
 const BINDING_KINDS = (:all, :function, :type, :module, :value)
 
 "Plural label for a binding category, for the pane title."
-kind_label(kind::Symbol) = kind === :all ? "all" :
-                           kind === :value ? "values" : string(kind, "s")
+kind_label(kind::Symbol) =
+    kind === :all ? "all" : kind === :value ? "values" : string(kind, "s")
 
 "Drop the memoised module binding lists, so newly defined names show up."
 forget_modules!() = (empty!(_MODULE_NAMES); nothing)
@@ -382,8 +382,8 @@ forget_modules!() = (empty!(_MODULE_NAMES); nothing)
 # offers, and everything it contains.
 components(::Semantic, m::Module) = _module_components(m, false)
 components(::Fields, m::Module) = _module_components(m, true)
-component_count(::Semantic, m::Module) = length(module_names(m; all=false))
-component_count(::Fields, m::Module) = length(module_names(m; all=true))
+component_count(::Semantic, m::Module) = length(module_names(m; all = false))
+component_count(::Fields, m::Module) = length(module_names(m; all = true))
 has_semantic_view(::Module) = true
 
 function _module_components(m::Module, all::Bool)
@@ -394,8 +394,8 @@ function _module_component(m::Module, name::Symbol)
     s = String(name)
     tpl = Base.isidentifier(s) ? "{}.$s" : "getfield({}, Symbol($(repr(s))))"
     isdefined(m, name) ?
-        Component(s, tpl, _tryget(() -> getfield(m, name)); kind=:field) :
-        Component(s, tpl, Undef(); kind=:field)
+    Component(s, tpl, _tryget(() -> getfield(m, name)); kind = :field) :
+    Component(s, tpl, Undef(); kind = :field)
 end
 
 # ── Functions: a function is its methods ─────────────────────────────
@@ -408,8 +408,10 @@ has_semantic_view(::Function) = true
 
 function _method_components(@nospecialize(f))
     ms = collect(methods(f))
-    (Component(_method_key(ms[i]), "collect(methods({}))[$i]", ms[i]; kind=:index)
-     for i in eachindex(ms))
+    (
+        Component(_method_key(ms[i]), "collect(methods({}))[$i]", ms[i]; kind = :index) for
+        i in eachindex(ms)
+    )
 end
 
 """
@@ -447,8 +449,7 @@ components(::Semantic, x::AbstractArray) = _array_components(x)
 component_count(::Semantic, x::AbstractArray) = length(x)
 has_semantic_view(::AbstractArray) = true
 
-components(::Semantic, x::AbstractDict) =
-    (_entry_component(k, v) for (k, v) in x)
+components(::Semantic, x::AbstractDict) = (_entry_component(k, v) for (k, v) in x)
 component_count(::Semantic, x::AbstractDict) = length(x)
 has_semantic_view(::AbstractDict) = true
 
@@ -467,8 +468,8 @@ end
 function _field_component(@nospecialize(x), i::Int, name::Symbol)
     s = String(name)
     tpl = _field_template(s)
-    isdefined(x, i) ? Component(s, tpl, _tryget(() -> getfield(x, i)); kind=:field) :
-    Component(s, tpl, Undef(); kind=:field)
+    isdefined(x, i) ? Component(s, tpl, _tryget(() -> getfield(x, i)); kind = :field) :
+    Component(s, tpl, Undef(); kind = :field)
 end
 
 function _array_components(x::AbstractArray)
@@ -480,7 +481,7 @@ end
 
 function _entry_component(@nospecialize(k), @nospecialize(v))
     r = _saferepr(k)
-    Component(r, "{}[$r]", v; kind=:key)
+    Component(r, "{}[$r]", v; kind = :key)
 end
 
 # ── Accessor templates ───────────────────────────────────────────────
@@ -497,17 +498,19 @@ function _field_template(name::String)
     Base.isidentifier(name) ? "{}.$name" : "getfield({}, Symbol($(repr(name))))"
 end
 
-_saferepr(x) = try
-    repr(x)
-catch
-    string(typeof(x)) * "(…)"
-end
+_saferepr(x) =
+    try
+        repr(x)
+    catch
+        string(typeof(x)) * "(…)"
+    end
 
-_tryget(f) = try
-    f()
-catch e
-    AccessError(e)
-end
+_tryget(f) =
+    try
+        f()
+    catch e
+        AccessError(e)
+    end
 
 # ═══════════════════════════════════════════════════════════════════════
 # What the explorer calls
@@ -538,8 +541,7 @@ The components of `x` numbered `start` through `start + limit - 1`, in
 iteration order. Taking a window (rather than everything) is what keeps a
 million-element array browsable: the tree only ever holds one slice of it.
 """
-function component_window(mode::ExplorationMode, @nospecialize(x),
-                          start::Int, limit::Int)
+function component_window(mode::ExplorationMode, @nospecialize(x), start::Int, limit::Int)
     (limit < 1 || start < 1 || is_leaf(x)) && return Component[]
     it = try
         components(mode, x)
