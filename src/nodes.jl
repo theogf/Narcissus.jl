@@ -275,6 +275,11 @@ computed yet. Arrays are scanned to answer this, which is why the answer is
 kept — and why the renderer asks [`anomaly_state`](@ref) instead.
 """
 function node_anomaly(n::ObjNode)
+    # A `… N more` marker carries its parent's container, not a value of its
+    # own. Flagging it means "there is a NaN somewhere in the rest of this",
+    # which is already what the row above says and is not a place to put the
+    # cursor; skipping it is also what lets `a` walk on into the tail.
+    n.kind === :elided && return nothing
     n._anomaly === nothing || return n._anomaly === :none ? nothing : n._anomaly
     a = n.value isa Diff ? nothing : anomaly(n.value)
     n._anomaly = something(a, :none)
@@ -400,19 +405,79 @@ because that is instant, and only when nothing matches does the explorer go
 looking in the parts of the object it has not read yet. The walk is capped at
 `budget` nodes and `maxdepth` levels, because the whole point of the lazy tree
 is to never be obliged to read all of a large object.
+
+The tail of a truncated container is searched as well — the elements behind a
+`… N more` marker are as much part of the object as the first hundred — but
+through [`find_in_tail`](@ref), which does not pull them into the tree.
 """
 function find_node(root::ObjNode, predicate; budget::Ref{Int}=Ref(SEARCH_BUDGET),
                    maxdepth::Int=32, skip::Union{Nothing,ObjNode}=nothing)
     (budget[] -= 1) < 0 && return nothing
     maxdepth < 0 && return nothing
     root !== skip && predicate(root) && return root
-    (root.expandable && root.kind !== :elided) || return nothing
+    root.expandable || return nothing
+    root.kind === :elided &&
+        return find_in_tail(root, predicate; budget, maxdepth, skip)
     load_children!(root)
     for c in root.children
         found = find_node(c, predicate; budget, maxdepth = maxdepth - 1, skip)
         found === nothing || return found
     end
     nothing
+end
+
+"""
+    find_in_tail(marker, predicate; budget, maxdepth, skip) -> Union{Nothing,ObjNode}
+
+Search the components a `… N more` marker stands in for, and materialise only
+the branch that matches.
+
+Candidates are built *detached* from the tree and thrown away again, so a
+search that comes up empty leaves the container exactly as truncated as it
+found it — the alternative, expanding window after window as the walk goes,
+answers "no match" by having quietly grown a thousand rows onto the screen. A
+hit is then loaded for real, one window at a time up to the element that
+matched, and looked up again in the tree proper: the same walk, on nodes that
+are actually there for the cursor to land on.
+
+The elements are read in `limit`-sized windows and every candidate costs a
+node of the shared `budget`, so a search over a million-element array stops
+where any other search stops.
+"""
+function find_in_tail(marker::ObjNode, predicate; budget::Ref{Int},
+                      maxdepth::Int, skip::Union{Nothing,ObjNode})
+    parent = marker.parent
+    parent === nothing && return nothing
+    start = marker.next_start
+    while start <= marker.total && budget[] >= 0
+        window = component_window(parent.mode, parent.value, start, parent.limit)
+        isempty(window) && break
+        for (i, c) in enumerate(window)
+            index = start + i - 1
+            # Siblings of the marker, so tested at the marker's own depth.
+            probe = make_node(c, parent, index)
+            find_node(probe, predicate; budget, maxdepth, skip) === nothing ||
+                return realise_child!(parent, index, predicate, maxdepth, skip)
+        end
+        start += length(window)
+    end
+    nothing
+end
+
+"Load a truncated container up to `index`, and find the match inside it again."
+function realise_child!(parent::ObjNode, index::Int, predicate, maxdepth::Int,
+                        skip::Union{Nothing,ObjNode})
+    while index > length(parent.children) ||
+          parent.children[index].kind === :elided
+        tail = last(parent.children)
+        tail.kind === :elided || break
+        expand_elided!(tail)
+    end
+    index <= length(parent.children) || return nothing
+    # A fresh budget: this walk covers ground already paid for, and running out
+    # of it here would report "no match" for something just found.
+    find_node(parent.children[index], predicate;
+              budget = Ref(SEARCH_BUDGET), maxdepth, skip)
 end
 
 """

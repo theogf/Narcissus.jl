@@ -201,6 +201,7 @@ function kind_string(@nospecialize(v))
     v isa AbstractArray && return "array"
     v isa Tuple && return "tuple"
     v isa NamedTuple && return "named tuple"
+    v isa Method && return "method"
     v isa Function && return "function"
     v isa Type && return "type"
     v isa Module && return "module"
@@ -245,7 +246,9 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
         push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n",
                           tstyle(:border, dim=true)))
         push!(spans, Span("Semantic view lists what the module offers; the field "
-                          * "view lists everything it defines.\n\n", _dim()))
+                          * "view lists everything it defines. Press f to keep "
+                          * "only the functions, the types, the modules or the "
+                          * "values.\n\n", _dim()))
         _docs!(spans, v, width; separator=false)
         return spans
     elseif v isa Type
@@ -270,6 +273,16 @@ function detail_spans(n::ObjNode, width::Int; names=nothing, height::Int=60)
     elseif v isa Function
         _row!(spans, "methods", string(length(methods(v))), tstyle(:text))
         _row!(spans, "defined", string(parentmodule(v)), _dim())
+        _docs!(spans, v, width)
+        return spans
+    elseif v isa Method
+        # What you want from a method is its signature and its documentation.
+        # Its `show` output says the first of those and its fields are compiler
+        # bookkeeping, so neither earns the space.
+        _row!(spans, "function", string(v.name), tstyle(:primary))
+        _row!(spans, "args", _method_key(v), tstyle(:secondary))
+        _row!(spans, "defined", string(v.module), tstyle(:text))
+        _row!(spans, "source", string(basename(String(v.file)), ":", v.line), _dim())
         _docs!(spans, v, width)
         return spans
     elseif v isa AbstractArray
@@ -434,8 +447,8 @@ end
 
 Append the value's rendered documentation, or a note that there is none.
 
-What you want from a function or a type is almost never its `show` output — it
-is what the thing is *for*. The Markdown comes back as ANSI, which
+What you want from a function, a type or a method is almost never its `show`
+output — it is what the thing is *for*. The Markdown comes back as ANSI, which
 `parse_ansi` splits into styled spans, so the pane shows headers, emphasis and
 code blocks rather than a wall of asterisks.
 """
@@ -444,6 +457,12 @@ function _docs!(spans, @nospecialize(v), width::Int; separator::Bool=true)
                                    tstyle(:border, dim=true)))
     text = docstring(v; width = max(20, width - 1))
     text === nothing && return push!(spans, Span("(no documentation)\n", _dim()))
+    # A method with no docstring of its own falls back to everything written
+    # about the function, which is worth showing and worth labelling — the
+    # alternative is a page of prose that looks like it describes this method.
+    v isa Method && !has_method_doc(v) &&
+        push!(spans, Span("(nothing on this method — the function's documentation)\n\n",
+                          _dim()))
     append!(spans, parse_ansi(text))
     spans
 end

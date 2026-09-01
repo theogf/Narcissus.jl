@@ -445,12 +445,19 @@ function status_bar(m::Explorer, width::Int)
 
     left = Span[]
     hints = comparing(m) ?
-        (("↑↓", "move"), ("d", "next diff"), ("f", "fold same"), ("e", "expand"),
+        [("↑↓", "move"), ("d", "next diff"), ("f", "fold same"), ("e", "expand"),
          ("/", "search"), ("m", "view"), ("y", "path"), ("?", "help"),
-         ("q", "quit")) :
-        (("↑↓", "move"), ("←→", "fold"), ("⏎", "toggle"), ("/", "search"),
+         ("q", "quit")] :
+        [("↑↓", "move"), ("←→", "fold"), ("⏎", "toggle"), ("/", "search"),
          ("a", "anomaly"), ("M", "memory"), ("m", "view"), ("y", "path"),
-         ("?", "help"), ("q", "quit"))
+         ("?", "help"), ("q", "quit")]
+    # A module listing is a hundred names of four different kinds, and `f` is
+    # the key that cuts it down — but only there, so it earns its place in the
+    # bar only there. Third position, because hints are dropped from the right
+    # and this one is the answer to what the screen is showing you.
+    comparing(m) || !in_module(m.tree) ||
+        insert!(hints, 3, ("f", m.tree.kinds === :all ? "filter" :
+                                kind_label(m.tree.kinds)))
     for (k, label) in hints
         cost = textwidth(k) + textwidth(label) + 2
         cost > budget && break
@@ -477,6 +484,36 @@ function render_help(f::Frame, a::Rect)
 end
 
 # ── Entry point ──────────────────────────────────────────────────────
+
+"""
+    warm!(model) -> model
+
+Render one frame off-screen, before the terminal is handed over.
+
+Everything expensive about the first frame happens here rather than behind the
+alternate screen: the `show` method of a value nobody has printed before, the
+preview of every row that will be visible, the detail pane. Both are cached on
+the nodes, so the app does not pay for it twice.
+
+The point is not the speed, it is the way out. Inside the app loop the terminal
+is in raw mode, which makes `^C` a byte waiting to be read rather than a
+signal — and a value whose `show` takes a minute is then a minute you cannot
+interrupt, in front of a screen that has not drawn yet. Out here it is an
+ordinary computation and `^C` is an ordinary interrupt.
+
+Anything else that goes wrong is left for the app, which draws each row inside
+its own error handling and will report it in place.
+"""
+function warm!(m::Explorer)
+    try
+        size = Tachikoma.terminal_size()
+        rect = Rect(1, 1, max(20, size.cols), max(6, size.rows))
+        view(m, Frame(Buffer(rect), rect, GraphicsRegion[], PixelSnapshot[]))
+    catch e
+        e isa InterruptException && rethrow()
+    end
+    m
+end
 
 """
     narcissus(obj; name="obj", limit=$DEFAULT_LIMIT, expand=1, mode=:semantic, kwargs...)
@@ -513,7 +550,10 @@ function narcissus(@nospecialize(obj); name::AbstractString="obj",
     root = root_node(obj, name; limit, mode=exploration_mode(mode))
     expand_recursive!(root, expand - 1)
     m = Explorer(; tree = ObjectTree(root))
-    app(m; kwargs...)
+    # A module opens onto a wall of names, and the key that cuts it down is the
+    # one nobody thinks to look for. Say so once, on the way in.
+    obj isa Module && notify!(m, "f filters this listing by kind")
+    app(warm!(m); kwargs...)
     selected_value(m)
 end
 
@@ -554,7 +594,7 @@ function narcissus(@nospecialize(x), @nospecialize(y);
     expand_differences!(root, expand - 1)
     m = Explorer(; tree = ObjectTree(root), names = (lname, rname))
     node_status(root) === :same && notify!(m, "the two objects are identical")
-    app(m; kwargs...)
+    app(warm!(m); kwargs...)
     selected_value(m)
 end
 

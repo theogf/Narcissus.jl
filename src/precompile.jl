@@ -68,6 +68,50 @@
     expand_differences!(diff, 4)
     _drive(Explorer(; tree = ObjectTree(diff), names = ("left", "right")))
 
+    # The app loop itself: terminal setup, the frame timer, key decoding, the
+    # buffer diff that turns a frame into escape codes, and teardown. Nothing
+    # else here reaches any of it, and on a cold session it is by far the
+    # longest part of the wait between `narcissus(x)` and a first screen.
+    #
+    # Headless, so a build machine is fine: `io` takes the frames and `input`
+    # the keystrokes, so no terminal is opened and fd 0 is never dup'd. The
+    # active project is pointed at a scratch directory first because the loop
+    # saves its pane split through Preferences on the way out, and a package
+    # build has no business writing to the project that triggered it.
+    #
+    # Wrapped, because a workload that throws takes the whole package down with
+    # it: on a platform where this cannot run, the cost is a slower first frame
+    # and nothing else.
+    try
+        mktempdir() do dir
+            project = Base.active_project()
+            try
+                Base.set_active_project(joinpath(dir, "Project.toml"))
+                presses = Base.BufferStream()
+                # Escape is deliberately not among them: a lone escape byte
+                # starts a sequence the decoder then completes with whatever
+                # follows, eating the `q` and leaving the loop to the watchdog.
+                write(presses, "jl?xq")      # step in, help, close it, quit
+                model = Explorer(; tree = ObjectTree(root_node(sample(), "obj")))
+                # A build must not be able to hang. `q` ends the loop in the
+                # ordinary case; the watchdog sets the same flag the key sets,
+                # so a version that reads keys differently costs ten seconds
+                # rather than wedging the precompilation forever.
+                watchdog = Timer(_ -> (model.quit = true), 10)
+                try
+                    app(model; io = IOBuffer(), input = presses,
+                        tty_size = (rows = 30, cols = 100))
+                finally
+                    close(watchdog)
+                    close(presses)
+                end
+            finally
+                Base.set_active_project(project)
+            end
+        end
+    catch
+    end
+
     # Elision, cycles, and the awkward leaf values.
     long = root_node(collect(1:500), "v"; limit=20)
     toggle!(long)

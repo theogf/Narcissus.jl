@@ -223,13 +223,17 @@ strip_ansi(s::AbstractString) = replace(s, r"\e\[[0-9;]*m" => "")
 """
     docstring(x; width=80, color=true) -> Union{Nothing,String}
 
-The docstring attached to a function, type or module, rendered as Markdown, or
-`nothing` when there is none.
+The docstring attached to a function, type, module or method, rendered as
+Markdown, or `nothing` when there is none.
 
 Reached through the binding rather than the value, which is how Julia stores
 docs: a generic function does not carry its own documentation, the name it is
 bound to does. Anonymous functions and closures have no such binding and come
 back `nothing`.
+
+A `Method` is looked up by signature, so a method that carries its own
+docstring shows that one rather than everything written about the function —
+see [`doc_signature`](@ref) and [`has_method_doc`](@ref).
 
 Rendering goes through Julia's own Markdown writer at the given `width`, so
 headers, emphasis, lists and code blocks come out formatted rather than as raw
@@ -247,7 +251,7 @@ function docstring(@nospecialize(x); width::Int=80, color::Bool=true)
         io = IOBuffer()
         context = IOContext(io, :color => color, :limit => true,
                             :displaysize => (40, max(20, width)))
-        show(context, MIME"text/plain"(), Base.Docs.doc(binding))
+        show(context, MIME"text/plain"(), Base.Docs.doc(binding, doc_signature(x)))
         text = String(take!(io))
         plain = strip_ansi(text)
         (occursin("No documentation found", plain) || isempty(strip(plain))) &&
@@ -269,6 +273,65 @@ function doc_binding(x::Union{Function,Type,Module})
         Base.Docs.Binding(parentmodule(x), name)
     catch
         nothing
+    end
+end
+
+# A method's documentation is filed under the *function's* binding, not the
+# method's: `Docs.Binding` resolves `push!` to `Base` however many packages add
+# methods to it. The function comes back out of the signature rather than out
+# of `m.module`, which is where the method was written, not where the name
+# lives.
+function doc_binding(m::Method)
+    try
+        ftype = Base.unwrap_unionall(m.sig).parameters[1]
+        isdefined(ftype, :instance) ?
+            doc_binding(ftype.instance) : Base.Docs.Binding(m.module, m.name)
+    catch
+        nothing
+    end
+end
+
+"""
+    doc_signature(x) -> Type
+
+The argument-tuple type a documentation lookup should match, `Union{}` for
+anything but a `Method` — a bare binding wants every docstring filed under it.
+
+For a method it is the method's own signature with the function's type dropped,
+which is the shape the docsystem keys signature-specific docstrings by. Handing
+that to `Docs.doc` is what makes `?push!(::Vector, ::Any)` narrower than
+`?push!`.
+"""
+doc_signature(@nospecialize(x)) = Union{}
+doc_signature(m::Method) = Base.tuple_type_tail(m.sig)
+
+"""
+    has_method_doc(m::Method) -> Bool
+
+Whether a docstring is filed under this method's own signature, as opposed to
+one written for the function as a whole.
+
+The distinction is worth drawing because [`docstring`](@ref) falls back to
+every docstring on the binding when a method has none of its own — useful, but
+not a description of *this* method, and the pane should say which it is
+showing. Reads the docsystem's tables directly; anything unexpected there is
+answered with `false`, which only costs the note.
+"""
+function has_method_doc(m::Method)
+    binding = doc_binding(m)
+    binding === nothing && return false
+    try
+        sig = doc_signature(m)
+        for mod in Base.Docs.modules
+            table = Base.Docs.meta(mod; autoinit=false)
+            table === nothing && continue
+            multidoc = get(table, binding, nothing)
+            multidoc === nothing && continue
+            any(msig -> sig <: msig, multidoc.order) && return true
+        end
+        false
+    catch
+        false
     end
 end
 
