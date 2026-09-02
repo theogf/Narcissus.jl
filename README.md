@@ -25,6 +25,7 @@ using Narcissus
 narcissus(model)                                     # explore one object
 narcissus(before, after; names=("before", "after"))  # compare two
 @narcissus model.layers[2]                           # …and keep the real path
+@narcissus                                           # …or the variables in scope
 print_object(model)                                  # or just print it
 ```
 
@@ -87,6 +88,21 @@ julia> @narcissus model.layers[2]     # `y` now yields model.layers[2].weights
 julia> @narcissus before after        # rooted at `before` and `after`
 julia> @narcissus model mode=:fields  # keywords pass straight through
 ```
+
+With no arguments at all it opens the variables in scope where you wrote it —
+every argument and local of the enclosing function, which is the state of a
+computation you have stopped in the middle of:
+
+```julia
+function train(model, data)
+    loss = evaluate(model, data)
+    @narcissus                        # model, data and loss, walkable
+end
+```
+
+The paths are the names as they are written there, so `y` on a field of `model`
+gives you `model.layers` — something you can paste where you were. At the REPL
+prompt nothing is local, so there it lists the module's globals instead.
 
 ## Finding things
 
