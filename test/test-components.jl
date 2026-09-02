@@ -275,6 +275,42 @@ end
     @test n_components(Fields(), closure) == 1     # `a` was captured
 end
 
+@testitem "a scope decomposes into its variables" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: Locals, scope_or_module, has_semantic_view
+
+    vars = Dict{Symbol,Any}(:model => [1.0, 2.0], :epochs => 5, Symbol("#self#") => sin)
+    scope = Locals(vars)
+
+    # Sorted and without the gensyms nobody wrote.
+    @test scope.names == [:epochs, :model]
+    @test length(scope) == 2
+    @test !has_semantic_view(scope)              # these *are* the variables
+
+    kids = window(scope, 1, 10)
+    @test [k.key for k in kids] == ["epochs", "model"]
+    @test all(k -> k.kind === :field, kids)
+    # The path is the name as it is written in the scope, not a lookup into a
+    # container that only exists in here.
+    @test [k.template for k in kids] == ["epochs", "model"]
+    @test kids[2].value == [1.0, 2.0]
+
+    @test occursin("2 variables", sprint(show, scope))
+    @test occursin("epochs::Int64", sprint(show, MIME"text/plain"(), scope))
+end
+
+@testitem "an empty scope falls back to the module" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: Locals, scope_or_module
+
+    value, name = scope_or_module(Dict{Symbol,Any}(:x => 1), Main)
+    @test value isa Locals
+    @test name == "locals"
+
+    # At the REPL prompt nothing is local; the globals are what was meant.
+    value, name = scope_or_module(Dict{Symbol,Any}(), Base)
+    @test value === Base
+    @test name == "Base"
+end
+
 @testitem "module bindings sort into kinds" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: binding_kind, kind_label, BINDING_KINDS
 

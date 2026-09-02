@@ -23,6 +23,19 @@ end
     @test "b.tags[:a]" in paths
 end
 
+@testitem "a scope roots paths at the variable names" tags=[:unit] setup=[Fixtures] begin
+    using Narcissus: Locals, root_node, expand_recursive!, flatten
+
+    scope = Locals(Dict{Symbol,Any}(:branch => sample_branch(), :n => 7))
+    root = root_node(scope, "locals")
+    expand_recursive!(root, 3)
+    paths = [r.node.path for r in flatten(root)]
+
+    @test "n" in paths                     # not `locals.n`
+    @test "branch.leaf.α" in paths         # and everything below composes
+    @test "branch.data[2, 1]" in paths
+end
+
 @testitem "cycles are marked, not followed" tags=[:unit] setup=[Fixtures] begin
     using Narcissus: root_node, flatten, expand_recursive!
 

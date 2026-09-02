@@ -181,6 +181,8 @@ function _type_string(n::ObjNode)
     v isa Type && return "type"
     # `typeof(sin)` prints as `typeof(sin)`, which only repeats the value.
     v isa Function && return is_macro(v) ? "macro" : "function"
+    # `Narcissus.Locals` names the wrapper, not the thing anyone is looking at.
+    v isa Locals && return "scope"
     string(typeof(v))
 end
 
@@ -354,6 +356,7 @@ function kind_string(@nospecialize(v))
     v isa Tuple && return "tuple"
     v isa NamedTuple && return "named tuple"
     v isa Method && return "method"
+    v isa Locals && return "local scope"
     v isa Function && return is_macro(v) ? "macro" : "function"
     v isa Type && return "type"
     v isa Module && return "module"
@@ -437,6 +440,20 @@ function detail_spans(n::ObjNode, width::Int; names = nothing, height::Int = 60)
         _row!(spans, "methods", string(length(methods(v))), tstyle(:text))
         _row!(spans, "defined", string(parentmodule(v)), _dim())
         _docs!(spans, v, width)
+        return spans
+    elseif v isa Locals
+        # No count row: `parts` above already says how many there are.
+        push!(spans, Span("\n" * "─"^max(1, width - 1) * "\n", tstyle(:border, dim = true)))
+        push!(
+            spans,
+            Span(
+                "The scope `@narcissus` was written in. Paths are the names as " *
+                "they are written there, so `y` gives you back something you " *
+                "can paste where you were.\n\n",
+                _dim(),
+            ),
+        )
+        push!(spans, Span(plain_show(v; width, height), tstyle(:text)))
         return spans
     elseif v isa Method
         # What you want from a method is its signature and its documentation.

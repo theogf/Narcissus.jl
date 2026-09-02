@@ -115,6 +115,25 @@ end
     rm(result.file; force = true)
 end
 
+@testitem "@narcissus with no arguments opens the scope" tags=[:integration] setup=[AppLoop] begin
+    using Narcissus: Locals
+
+    quits() = (s = Base.BufferStream(); write(s, "q"); s)
+
+    function inside(net)
+        epochs = 3
+        @narcissus io = IOBuffer() input = quits() tty_size = (rows = 20, cols = 80)
+    end
+
+    scope = inside(sample_net())
+    @test scope isa Locals                       # the cursor never left the root
+    @test scope.names == [:epochs, :net]
+
+    # Nothing is local at the top level of a module, so the module it is.
+    here = @narcissus io = IOBuffer() input = quits() tty_size = (rows = 20, cols = 80)
+    @test here === @__MODULE__
+end
+
 @testitem "the panes resize by dragging the border" tags=[:unit] setup=[AppLoop] begin
     using Narcissus: Explorer, ObjectTree, root_node
     import Tachikoma: view, update!

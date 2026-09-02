@@ -740,6 +740,38 @@ function narcissus(
 end
 
 """
+    scope_or_module(vars, mod) -> (value, name)
+
+What `@narcissus` with no arguments should open, and what to root its paths at.
+
+`Base.@locals` is empty at the REPL prompt, where nothing is local — and there
+the variables someone means by "what have I got" are the module's globals. So
+an empty scope falls back to the module, which the explorer already knows how
+to list, and `f` already knows how to narrow to just the values.
+"""
+function scope_or_module(vars::AbstractDict{Symbol}, mod::Module)
+    scope = Locals(vars)
+    isempty(scope) ? (mod, string(nameof(mod))) : (scope, "locals")
+end
+
+"""
+    narcissus_locals(vars, mod; name=nothing, kwargs...)
+
+What `@narcissus` with no arguments calls. See [`scope_or_module`](@ref); an
+explicit `name` still wins.
+"""
+function narcissus_locals(
+    vars::AbstractDict{Symbol},
+    mod::Module;
+    name = nothing,
+    kwargs...,
+)
+    value, default = scope_or_module(vars, mod)
+    narcissus(value; name = something(name, default), kwargs...)
+end
+
+"""
+    @narcissus
     @narcissus expr
     @narcissus expr₁ expr₂
     @narcissus expr key=value...
@@ -747,11 +779,26 @@ end
 Explore (or compare) the value of an expression, naming the root after the
 expression itself.
 
+With no arguments at all, explore the variables in scope where it is written —
+every argument and local of the enclosing function, which is the whole state of
+a computation you have stopped in the middle of:
+
+```julia
+function train(model, data)
+    loss = evaluate(model, data)
+    @narcissus                     # model, data and loss, walkable
+end
+```
+
+At the REPL prompt nothing is local, so there it lists the module's globals
+instead — `Main`, and what you have defined in it. See [`Locals`](@ref).
+
 The point is the paths. `narcissus(model.layers[2])` roots every path at a
 generic `obj`, so `y` hands you `obj.weights` — true, but not something you can
 paste anywhere. The macro captures the source text instead:
 
 ```julia
+julia> @narcissus                      # the variables in scope
 julia> @narcissus model.layers[2]      # `y` now yields model.layers[2].weights
 julia> @narcissus before after         # rooted at `before` and `after`
 julia> @narcissus model mode=:fields   # keyword arguments pass straight through
@@ -773,7 +820,18 @@ macro narcissus(args...)
     end
     named = Set(o isa Expr ? o.args[1] : o for o in options)
 
-    if length(positional) == 1
+    if isempty(positional)
+        # `Base.@locals` reads the scope it is expanded in, which is the
+        # caller's — so it has to go out in the returned expression rather than
+        # be called here, where the only locals are this macro's own.
+        return Expr(
+            :call,
+            :narcissus_locals,
+            Expr(:parameters, options...),
+            :(Base.@locals()),
+            __module__,
+        )
+    elseif length(positional) == 1
         :name in named || pushfirst!(options, Expr(:kw, :name, string(positional[1])))
         return Expr(:call, :narcissus, Expr(:parameters, options...), esc(positional[1]))
     elseif length(positional) == 2
@@ -790,6 +848,9 @@ macro narcissus(args...)
         )
     end
     return :(throw(
-        ArgumentError("@narcissus takes one expression to explore, or two to compare"),
+        ArgumentError(
+            "@narcissus takes no arguments for the variables in scope, one " *
+            "expression to explore, or two to compare",
+        ),
     ))
 end

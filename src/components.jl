@@ -62,6 +62,66 @@ struct AccessError
 end
 
 """
+    Locals(vars)
+
+The variables in scope where [`@narcissus`](@ref) was called, as a value in its
+own right.
+
+It exists for the paths. A `Dict` of names would decompose into rows whose path
+expressions read `obj[:weights]`, naming a container that only exists inside the
+explorer; the whole point of the macro is that `y` hands back something you can
+paste where you were. So each variable's path template is the bare name it is
+written under, and everything below it composes from there — the row for a
+field of `model` yields `model.layers`, exactly as you would type it.
+
+Holds the values `Base.@locals` copied out at the call, so it is a snapshot: a
+variable rebound afterwards still shows what it was bound to then. Mutating the
+objects themselves is visible as usual, and `r` re-reads them.
+"""
+struct Locals
+    names::Vector{Symbol}
+    values::Vector{Any}
+end
+
+function Locals(vars::AbstractDict{Symbol})
+    # Sorted, because a `Dict` hands them over in hash order and the same scope
+    # would list its variables differently from one call to the next. Gensyms —
+    # `#self#` and the temporaries a closure or a comprehension leaves behind —
+    # are not variables anyone wrote.
+    names = sort!([n for n in keys(vars) if !startswith(String(n), "#")])
+    Locals(names, Any[vars[n] for n in names])
+end
+
+Base.length(l::Locals) = length(l.names)
+Base.isempty(l::Locals) = isempty(l.names)
+
+function Base.show(io::IO, l::Locals)
+    n = length(l)
+    print(io, n, " variable", n == 1 ? "" : "s")
+    n == 0 || print(io, ": ", join(l.names, ", "))
+end
+
+function Base.show(io::IO, ::MIME"text/plain", l::Locals)
+    println(io, length(l), " variable", length(l) == 1 ? "" : "s", " in scope:")
+    for (name, value) in zip(l.names, l.values)
+        println(io, "  ", name, "::", typeof(value))
+    end
+end
+
+# One view: these *are* the variables, and the two fields holding them are an
+# implementation detail nobody opened the explorer to see.
+components(::Semantic, l::Locals) = _local_components(l)
+components(::Fields, l::Locals) = _local_components(l)
+component_count(::Semantic, l::Locals) = length(l)
+component_count(::Fields, l::Locals) = length(l)
+has_semantic_view(::Locals) = false
+
+_local_components(l::Locals) = (
+    Component(String(l.names[i]), String(l.names[i]), l.values[i]; kind = :field) for
+    i in eachindex(l.names)
+)
+
+"""
     Component(key, template, value; kind=:index)
 
 One part of a decomposed value, as returned by [`components`](@ref). A row in
