@@ -239,6 +239,43 @@ Registrations are consulted only for values that no `components` method already
 claims, so they never shadow ordinary dispatch — and a registered view answers
 [`has_semantic_view`](@ref) `true` without needing a method of its own.
 
+## Packages that already have a view
+
+Two extensions ship with Narcissus and load themselves as soon as the package
+they are about is in the session — nothing to import, nothing to call.
+
+[**Dictionaries.jl**](https://github.com/andyferris/Dictionaries.jl). An
+`AbstractDictionary` is deliberately not an `AbstractDict`, so without a view
+of its own a `Dictionary` opens as `indices` and `values` — two parallel
+vectors you have to line up by eye. It decomposes into entries instead, keyed
+exactly as a `Dict`'s are, and an `AbstractIndices` — whose members *are* its
+keys — decomposes into its members the way a `Set` does:
+
+```text
+▾ d::Dictionary{Symbol, Int64} = {:a │ 1, :b │ 2}     ▾ d::Dictionary{…} ·fields = …
+├─ :a::Int64 = 1        @ d[:a]                        ├─▸indices::Indices{Symbol} = {:a, :b}
+└─ :b::Int64 = 2        @ d[:b]                        └─▸values::Vector{Int64} = [1, 2]
+
+           semantic                                                  fields
+```
+
+[**Tables.jl**](https://github.com/JuliaData/Tables.jl). Anything satisfying
+`Tables.istable` — a `DataFrame`, a `CSV.File`, a `TypedTable` — decomposes
+into its columns, each of which you can then walk like any other vector:
+
+```text
+▾ df::DataFrame = 3×2 DataFrame …
+├─▸name::Vector{String}   = ["ada", "bob", "cy"]   @ Tables.getcolumn(df, :name)
+└─▸score::Vector{Float64} = [0.9, 0.7, 0.4]        @ Tables.getcolumn(df, :score)
+```
+
+The column count comes from `Tables.schema` where the table has one, so opening
+a node never materialises a lazy table just to find out how wide it is. Values
+that already have a better view keep it: a `NamedTuple` of vectors is a column
+table, but its fields are those columns under those names and `df.name` is a
+nicer path than `Tables.getcolumn(df, :name)`, so it stays a struct; a
+`Vector` of `NamedTuple`s stays an array of rows.
+
 ## Comparison comes along for free
 
 `narcissus(x, y)` wraps the pair in a [`Diff`](@ref), which is itself a value
