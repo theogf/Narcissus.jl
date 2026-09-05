@@ -1,7 +1,7 @@
 name = "Narcissus"
 uuid = "572f1241-6902-50d0-b42e-e4656d46e70a"
 authors = ["Théo Galy-Fajou <theo.galyfajou@gmail.com>"]
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
